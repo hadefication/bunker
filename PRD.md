@@ -57,10 +57,11 @@ Framework-specific logic is behind a trait so adding new frameworks doesn't touc
     ├── bunker.conf          # project config (key=value, sourced by the CLI)
     ├── Caddyfile
     ├── cloudflared.yml      # cloudflared tunnel config with ingress rules
-    ├── com.<project>.server.plist
-    ├── com.<project>.tunnel.plist
-    ├── com.<project>.queue.plist
-    ├── com.<project>.scheduler.plist   # optional, when SCHEDULER_ENABLED=true
+    ├── com.bunker.<project>.server.plist
+    ├── com.bunker.<project>.tunnel.plist
+    ├── com.bunker.<project>.queue.plist
+    ├── com.bunker.<project>.logrotate.plist  # daily log rotation at 3 AM
+    ├── com.bunker.<project>.scheduler.plist  # optional, when SCHEDULER_ENABLED=true
     └── logs/
         ├── caddy-access.log
         ├── frankenphp-stdout.log
@@ -146,7 +147,7 @@ List all bunkered projects with their status (running/stopped), port, and domain
 
 ### `bunker edit [project]`
 
-Open `~/.bunker/<project>/` in the user's `$EDITOR` for manual config tweaks.
+Open `~/.bunker/<project>/bunker.conf` in the user's `$EDITOR` for manual config tweaks.
 
 ### `bunker update [project]`
 
@@ -177,7 +178,7 @@ Hardened for production:
 - Binds to localhost only (external access via tunnel)
 - Security headers (nosniff, DENY frame, strict referrer, permissions policy)
 - Blocks dotfiles, vendor, storage, artisan, direct PHP access, backup/swap files
-- JSON access logging with rotation (10MB, keep 5)
+- Console access logging with rotation (10MB, keep 5), sensitive headers stripped
 - gzip/zstd compression
 - 10MB request body limit
 

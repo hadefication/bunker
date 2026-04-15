@@ -26,7 +26,7 @@ cargo install --path .         # installs to ~/.cargo/bin/bunker
 
 - **Rust binary** with `clap` derive for CLI parsing
 - **Zero project contamination** — all config lives in `~/.bunker/<project>/`, nothing written to the target project
-- **macOS LaunchAgents** for service management (3-4 plists per project: server, tunnel, queue worker, and optionally scheduler)
+- **macOS LaunchAgents** for service management (4-5 plists per project: server, tunnel, queue worker, logrotate, and optionally scheduler)
 - **Project resolution**: explicit arg → CWD basename lookup in `~/.bunker/` → error
 - **Framework trait** — framework-specific logic (detection, templates, services) is behind a trait. Adding a new framework means implementing the trait, not modifying core commands.
 - **Non-interactive mode** — `--yes` flag and CLI args on `init`/`teardown` for AI agents and scripting
@@ -35,10 +35,10 @@ cargo install --path .         # installs to ~/.cargo/bin/bunker
 ### Per-Project Config Layout (`~/.bunker/<project>/`)
 
 - `bunker.conf` — key=value config parsed by the CLI
-- `Caddyfile` — FrankenPHP config (hardened: security headers, HSTS, dotfile blocking, direct PHP blocking, gzip/zstd, JSON access logs)
+- `Caddyfile` — FrankenPHP config (hardened: security headers, HSTS, dotfile blocking, direct PHP blocking, gzip/zstd, console access logs with sensitive header stripping)
 - `cloudflared.yml` — cloudflared tunnel config with ingress rules mapping hostname to localhost:port
-- `com.<project>.{server,tunnel,queue,scheduler}.plist` — LaunchAgent definitions (scheduler is optional, gated by `SCHEDULER_ENABLED` in config)
-- `logs/` — stdout/stderr for each service + caddy access log
+- `com.bunker.<project>.{server,tunnel,queue,logrotate,scheduler}.plist` — LaunchAgent definitions (scheduler is optional, gated by `SCHEDULER_ENABLED` in config; logrotate runs daily at 3 AM)
+- `logs/` — stdout/stderr for each service + caddy access log (rotated: 10MB cap, 5 copies)
 
 ### Key Crates
 
@@ -70,12 +70,21 @@ bunker completions <shell>       # bash, zsh, fish
 ## Input Validation
 
 All user-supplied values are validated before use:
-- **Project names**: `[a-z0-9-]` only
-- **Tunnel names**: `[a-zA-Z0-9-]`, no leading dash
-- **Domains**: must contain `.`, `[a-zA-Z0-9.-]`, no leading dash
-- **Paths**: must be absolute, no newlines or null bytes
-- **Plist values**: XML-escaped before interpolation
+- **Project names**: `[a-z0-9-]` only, no leading dash, max 64 chars
+- **Tunnel names**: `[a-zA-Z0-9-]`, no leading dash, max 64 chars
+- **Domains**: must contain `.`, `[a-zA-Z0-9.-]`, no leading dash, no consecutive/trailing dots, max 253 chars (63 per label)
+- **Paths**: must be absolute, no `..` segments, no null bytes/newlines, no shell metacharacters (`"'`$\;|&><()`)
+- **Plist values**: XML-escaped (including single quotes, control character stripping) before interpolation
 - **Caddyfile paths**: quoted to handle spaces
+
+## Security
+
+- **File permissions**: `~/.bunker/` directories are 0o700, all generated files are 0o600
+- **Atomic symlinks**: plist symlinks use create-tmp-then-rename to prevent TOCTOU races
+- **Plist namespace**: labels prefixed `com.bunker.*` to avoid Apple namespace collisions
+- **No shell invocation**: all `Command::new()` uses direct argv, never `sh -c`
+- **Log hygiene**: Caddy access logs strip Authorization, Cookie, Set-Cookie, X-Api-Key headers
+- **Log rotation**: per-project logrotate LaunchAgent caps logs at 10MB with 5 rotated copies
 
 ## Cloudflare Integration
 
