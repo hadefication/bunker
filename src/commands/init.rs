@@ -1,7 +1,6 @@
 use std::env;
 use std::fs;
 use std::io::IsTerminal;
-use std::os::unix::fs as unix_fs;
 use std::process::Command;
 
 use dialoguer::{Confirm, Input};
@@ -243,10 +242,7 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
         crate::config::write_restricted(&plist_path, content)?;
 
         let link_path = la_dir.join(filename);
-        if link_path.exists() || link_path.is_symlink() {
-            fs::remove_file(&link_path)?;
-        }
-        unix_fs::symlink(&plist_path, &link_path)?;
+        crate::config::atomic_symlink(&plist_path, &link_path)?;
     }
 
     // Route DNS for custom domains

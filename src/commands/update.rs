@@ -1,5 +1,4 @@
 use std::fs;
-use std::os::unix::fs as unix_fs;
 
 use crate::config::{launch_agents_dir, resolve_project, ProjectConfig};
 use crate::output;
@@ -31,10 +30,7 @@ pub fn run(project: Option<String>) -> anyhow::Result<()> {
         crate::config::write_restricted(&plist_path, content)?;
 
         let link_path = la_dir.join(filename);
-        if link_path.exists() || link_path.is_symlink() {
-            fs::remove_file(&link_path)?;
-        }
-        unix_fs::symlink(&plist_path, &link_path)?;
+        crate::config::atomic_symlink(&plist_path, &link_path)?;
     }
     output::success(&format!("{} plist(s) updated", plists.len()));
 

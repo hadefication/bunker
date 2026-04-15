@@ -80,13 +80,16 @@ pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Validate a file path: must be absolute, no newlines or null bytes
+/// Validate a file path: must be absolute, no newlines, null bytes, or `..` segments
 fn validate_path(label: &str, path: &str) -> anyhow::Result<()> {
     if path.contains('\0') || path.contains('\n') || path.contains('\r') {
         anyhow::bail!("{} contains invalid characters (null bytes or newlines)", label);
     }
     if !Path::new(path).is_absolute() {
         anyhow::bail!("{} must be an absolute path, got: {}", label, path);
+    }
+    if Path::new(path).components().any(|c| c == std::path::Component::ParentDir) {
+        anyhow::bail!("{} must not contain '..' segments, got: {}", label, path);
     }
     Ok(())
 }
@@ -144,6 +147,7 @@ impl ProjectConfig {
         if self.scheduler_enabled {
             labels.push(format!("com.{}.scheduler", self.project_name));
         }
+        labels.push(format!("com.{}.logrotate", self.project_name));
         labels
     }
 
@@ -261,6 +265,15 @@ fn parse_conf(content: &str) -> HashMap<String, String> {
 pub fn write_restricted(path: &Path, content: &str) -> anyhow::Result<()> {
     fs::write(path, content)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+/// Atomically create or replace a symlink (create temp + rename)
+pub fn atomic_symlink(target: &Path, link: &Path) -> anyhow::Result<()> {
+    let tmp = link.with_extension("tmp");
+    let _ = fs::remove_file(&tmp);
+    std::os::unix::fs::symlink(target, &tmp)?;
+    fs::rename(&tmp, link)?;
     Ok(())
 }
 
@@ -430,6 +443,8 @@ mod tests {
         assert!(validate_path("test", "relative/path").is_err());
         assert!(validate_path("test", "/path/with\nnewline").is_err());
         assert!(validate_path("test", "/path/with\0null").is_err());
+        assert!(validate_path("test", "/usr/local/../../../etc/shadow").is_err());
+        assert!(validate_path("test", "/usr/bin/..").is_err());
     }
 
     // --- parse_conf ---

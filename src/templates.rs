@@ -208,7 +208,62 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
         plists.push((format!("{}.plist", label), svc_plist));
     }
 
+    // Log rotation plist — runs daily, keeps 5 rotated copies, 10MB max per file
+    let logrotate_label = format!("com.{}.logrotate", config.project_name);
+    let logrotate_plist = log_rotation_plist(&logrotate_label, &logs_str);
+    plists.push((format!("{}.plist", logrotate_label), logrotate_plist));
+
     plists
+}
+
+fn log_rotation_plist(label: &str, logs_dir: &str) -> String {
+    // Rotate .log files over 10MB, keep 5 old copies, remove oldest
+    let script = format!(
+        r#"for f in "{logs_dir}"/*.log; do \
+  [ -f "$f" ] || continue; \
+  size=$(stat -f%z "$f" 2>/dev/null || echo 0); \
+  if [ "$size" -gt 10485760 ]; then \
+    for i in 4 3 2 1; do \
+      j=$((i+1)); \
+      [ -f "$f.$i" ] && mv "$f.$i" "$f.$j"; \
+    done; \
+    cp "$f" "$f.1" && : > "$f"; \
+    [ -f "$f.5" ] && rm "$f.5"; \
+  fi; \
+done"#,
+        logs_dir = logs_dir,
+    );
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>{script}</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+</dict>
+</plist>
+"#,
+        label = xml_escape(label),
+        script = xml_escape(&script),
+    )
 }
 
 #[cfg(test)]
@@ -306,7 +361,7 @@ mod tests {
     fn generate_plists_count_without_scheduler() {
         let config = test_config();
         let plists = generate_plists(&config);
-        assert_eq!(plists.len(), 3); // server, tunnel, queue
+        assert_eq!(plists.len(), 4); // server, tunnel, queue, logrotate
     }
 
     #[test]
@@ -314,6 +369,16 @@ mod tests {
         let mut config = test_config();
         config.scheduler_enabled = true;
         let plists = generate_plists(&config);
-        assert_eq!(plists.len(), 4); // server, tunnel, queue, scheduler
+        assert_eq!(plists.len(), 5); // server, tunnel, queue, scheduler, logrotate
+    }
+
+    #[test]
+    fn logrotate_plist_has_calendar_interval() {
+        let config = test_config();
+        let plists = generate_plists(&config);
+        let (name, content) = plists.last().unwrap();
+        assert!(name.contains("logrotate"));
+        assert!(content.contains("StartCalendarInterval"));
+        assert!(content.contains("<integer>3</integer>")); // 3 AM
     }
 }
