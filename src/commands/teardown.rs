@@ -40,32 +40,25 @@ pub fn run(project: Option<String>, yes: bool) -> anyhow::Result<()> {
         }
     }
 
-    // Clean up DNS route for custom domains
+    // Remind user to remove DNS record for custom domains.
+    // cloudflared CLI can create CNAME records but has no way to delete them —
+    // deletion requires the Cloudflare API or dashboard.
     let is_custom_domain = !config.domain.ends_with(".cfargotunnel.com");
     if is_custom_domain {
-        output::info(&format!("Removing DNS route for {}...", config.domain));
-        let dns_result = Command::new(&config.cloudflared_path)
-            .args([
-                "tunnel",
-                "route",
-                "dns",
-                "--remove",
-                &config.tunnel_name,
-                &config.domain,
-            ])
-            .output();
-
-        match dns_result {
-            Ok(out) if out.status.success() => {
-                output::success(&format!("DNS route removed for {}", config.domain));
-            }
-            _ => {
-                output::warn(&format!(
-                    "Could not remove DNS route automatically. Remove the CNAME for {} manually.",
-                    config.domain
-                ));
-            }
-        }
+        let zone = config.domain
+            .splitn(2, '.')
+            .nth(1)
+            .unwrap_or(&config.domain);
+        output::warn(&format!(
+            "The CNAME record for {} must be removed manually.", config.domain
+        ));
+        output::info(&format!(
+            "  → Cloudflare Dashboard > {} > DNS > Records", zone
+        ));
+        output::info(&format!(
+            "  → Find the CNAME entry for '{}' and delete it", config.domain
+        ));
+        output::info("  Leaving it will show a Cloudflare Tunnel error page to visitors.");
     }
 
     // Delete cloudflared tunnel
