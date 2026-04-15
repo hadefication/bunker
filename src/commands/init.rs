@@ -227,11 +227,11 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
 
     // Generate Caddyfile
     let caddyfile_content = templates::caddyfile(&config);
-    fs::write(config.project_dir().join("Caddyfile"), caddyfile_content)?;
+    crate::config::write_restricted(&config.project_dir().join("Caddyfile"), &caddyfile_content)?;
 
     // Generate cloudflared config
     let cf_config = templates::cloudflared_config(&config);
-    fs::write(config.project_dir().join("cloudflared.yml"), cf_config)?;
+    crate::config::write_restricted(&config.project_dir().join("cloudflared.yml"), &cf_config)?;
 
     // Generate plists
     let plists = templates::generate_plists(&config);
@@ -240,7 +240,7 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
 
     for (filename, content) in &plists {
         let plist_path = config.project_dir().join(filename);
-        fs::write(&plist_path, content)?;
+        crate::config::write_restricted(&plist_path, content)?;
 
         let link_path = la_dir.join(filename);
         if link_path.exists() || link_path.is_symlink() {

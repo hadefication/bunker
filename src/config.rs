@@ -6,10 +6,16 @@ use std::path::{Path, PathBuf};
 
 use crate::framework::FrameworkKind;
 
-/// Validate a project name: only lowercase alphanumeric and hyphens
+/// Validate a project name: only lowercase alphanumeric and hyphens, no leading dash, max 64 chars
 pub fn validate_project_name(name: &str) -> anyhow::Result<()> {
     if name.is_empty() {
         anyhow::bail!("Project name cannot be empty");
+    }
+    if name.len() > 64 {
+        anyhow::bail!("Project name '{}' exceeds 64 characters", name);
+    }
+    if name.starts_with('-') {
+        anyhow::bail!("Project name '{}' must not start with a hyphen", name);
     }
     if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
         anyhow::bail!(
@@ -20,10 +26,13 @@ pub fn validate_project_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Validate a tunnel name: alphanumeric and hyphens, no leading dash
+/// Validate a tunnel name: alphanumeric and hyphens, no leading dash, max 64 chars
 pub fn validate_tunnel_name(name: &str) -> anyhow::Result<()> {
     if name.is_empty() {
         anyhow::bail!("Tunnel name cannot be empty");
+    }
+    if name.len() > 64 {
+        anyhow::bail!("Tunnel name '{}' exceeds 64 characters", name);
     }
     if name.starts_with('-') {
         anyhow::bail!("Tunnel name '{}' must not start with a hyphen", name);
@@ -37,10 +46,13 @@ pub fn validate_tunnel_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Validate a domain: must contain a dot, no leading dash, reasonable DNS charset
+/// Validate a domain: must contain a dot, no leading dash, reasonable DNS charset, max 253 chars
 pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
     if domain.is_empty() {
         anyhow::bail!("Domain cannot be empty");
+    }
+    if domain.len() > 253 {
+        anyhow::bail!("Domain '{}' exceeds 253 characters", domain);
     }
     if domain.starts_with('-') {
         anyhow::bail!("Domain '{}' must not start with a hyphen", domain);
@@ -48,11 +60,22 @@ pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
     if !domain.contains('.') {
         anyhow::bail!("Domain '{}' must contain at least one dot", domain);
     }
+    if domain.contains("..") {
+        anyhow::bail!("Domain '{}' must not contain consecutive dots", domain);
+    }
+    if domain.ends_with('.') {
+        anyhow::bail!("Domain '{}' must not end with a dot", domain);
+    }
     if !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
         anyhow::bail!(
             "Invalid domain '{}': only letters, digits, hyphens, and dots allowed",
             domain
         );
+    }
+    for label in domain.split('.') {
+        if label.len() > 63 {
+            anyhow::bail!("Domain label '{}' exceeds 63 characters", label);
+        }
     }
     Ok(())
 }
@@ -126,7 +149,12 @@ impl ProjectConfig {
 
     pub fn write(&self) -> anyhow::Result<()> {
         let dir = self.project_dir();
-        fs::create_dir_all(dir.join("logs"))?;
+        let logs_dir = dir.join("logs");
+        fs::create_dir_all(&logs_dir)?;
+        // Restrict directory permissions: owner-only access
+        fs::set_permissions(bunker_home(), fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+        fs::set_permissions(&logs_dir, fs::Permissions::from_mode(0o700))?;
 
         let content = format!(
             r#"PROJECT_NAME="{}"
@@ -227,6 +255,13 @@ fn parse_conf(content: &str) -> HashMap<String, String> {
         }
     }
     map
+}
+
+/// Write a file and set owner-only permissions (0o600)
+pub fn write_restricted(path: &Path, content: &str) -> anyhow::Result<()> {
+    fs::write(path, content)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
 }
 
 /// Resolve project name from optional arg or CWD
@@ -339,6 +374,9 @@ mod tests {
         assert!(validate_project_name("../evil").is_err());
         assert!(validate_project_name("my app").is_err());
         assert!(validate_project_name("my_app").is_err());
+        assert!(validate_project_name("-leading").is_err());
+        assert!(validate_project_name("--help").is_err());
+        assert!(validate_project_name(&"a".repeat(65)).is_err());
     }
 
     // --- validate_tunnel_name ---
@@ -355,6 +393,7 @@ mod tests {
         assert!(validate_tunnel_name("-leading").is_err());
         assert!(validate_tunnel_name("has spaces").is_err());
         assert!(validate_tunnel_name("--config").is_err());
+        assert!(validate_tunnel_name(&"a".repeat(65)).is_err());
     }
 
     // --- validate_domain ---
@@ -372,6 +411,10 @@ mod tests {
         assert!(validate_domain("nodot").is_err());
         assert!(validate_domain("-leading.com").is_err());
         assert!(validate_domain("has space.com").is_err());
+        assert!(validate_domain("double..dot.com").is_err());
+        assert!(validate_domain("trailing.com.").is_err());
+        assert!(validate_domain(&format!("{}.com", "a".repeat(64))).is_err());
+        assert!(validate_domain(&format!("{}.com", "a".repeat(251))).is_err());
     }
 
     // --- validate_path ---
