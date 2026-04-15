@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::IsTerminal;
 use std::process::Command;
 
 use dialoguer::Confirm;
@@ -7,7 +8,21 @@ use crate::commands::lifecycle;
 use crate::config::{launch_agents_dir, resolve_project, ProjectConfig};
 use crate::output;
 
-pub fn run(project: Option<String>) -> anyhow::Result<()> {
+fn confirm_or(label: &str, default: bool, yes: bool) -> anyhow::Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    if std::io::stdin().is_terminal() {
+        Ok(Confirm::new()
+            .with_prompt(label)
+            .default(default)
+            .interact()?)
+    } else {
+        Ok(default)
+    }
+}
+
+pub fn run(project: Option<String>, yes: bool) -> anyhow::Result<()> {
     let name = resolve_project(project)?;
     let config = ProjectConfig::load(&name)?;
     let project_dir = config.project_dir();
@@ -47,13 +62,11 @@ pub fn run(project: Option<String>) -> anyhow::Result<()> {
     }
 
     // Delete cloudflared tunnel
-    let delete_tunnel = Confirm::new()
-        .with_prompt(format!(
-            "Delete cloudflared tunnel '{}'?",
-            config.tunnel_name
-        ))
-        .default(true)
-        .interact()?;
+    let delete_tunnel = confirm_or(
+        &format!("Delete cloudflared tunnel '{}'?", config.tunnel_name),
+        true,
+        yes,
+    )?;
 
     if delete_tunnel {
         output::info(&format!("Deleting tunnel '{}'...", config.tunnel_name));
@@ -76,10 +89,11 @@ pub fn run(project: Option<String>) -> anyhow::Result<()> {
     }
 
     // Ask before nuking config
-    let remove = Confirm::new()
-        .with_prompt(format!("Remove all config in {}?", project_dir.display()))
-        .default(false)
-        .interact()?;
+    let remove = confirm_or(
+        &format!("Remove all config in {}?", project_dir.display()),
+        false,
+        yes,
+    )?;
 
     if remove {
         fs::remove_dir_all(&project_dir)?;

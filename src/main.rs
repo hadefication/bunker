@@ -11,7 +11,29 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Command::Init => commands::init::run(),
+        Command::Init {
+            name,
+            port,
+            domain,
+            tunnel,
+            scheduler,
+            php,
+            frankenphp,
+            cloudflared,
+            yes,
+            dry_run,
+        } => commands::init::run(commands::init::InitArgs {
+            name,
+            port,
+            domain,
+            tunnel,
+            scheduler,
+            php,
+            frankenphp,
+            cloudflared,
+            yes,
+            dry_run,
+        }),
         Command::Start { project } => commands::lifecycle::start(project),
         Command::Stop { project } => commands::lifecycle::stop(project),
         Command::Restart { project } => commands::lifecycle::restart(project),
@@ -23,7 +45,7 @@ fn main() {
             follow,
         } => commands::logs::run(project, service, follow),
         Command::List => commands::list::run(),
-        Command::Teardown { project } => commands::teardown::run(project),
+        Command::Teardown { project, yes } => commands::teardown::run(project, yes),
         Command::Edit { project } => commands::edit::run(project),
     };
 
