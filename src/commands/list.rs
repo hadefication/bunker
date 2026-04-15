@@ -24,10 +24,7 @@ pub fn run() -> anyhow::Result<()> {
         format!("{:<10}", "STATUS").bold(),
         "DOMAIN".bold()
     );
-    println!(
-        "  {:<20} {:<8} {:<10} ------",
-        "---", "----", "------"
-    );
+    println!("  {:<20} {:<8} {:<10} ------", "---", "----", "------");
 
     let mut entries: Vec<_> = fs::read_dir(&home)?
         .filter_map(|e| e.ok())

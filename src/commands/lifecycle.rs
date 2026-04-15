@@ -105,10 +105,7 @@ pub fn status(project: Option<String>) -> anyhow::Result<()> {
         format!("{:<10}", "STATE").bold(),
         "PID".bold()
     );
-    println!(
-        "  {:<12} {:<10} ---",
-        "-------", "-----"
-    );
+    println!("  {:<12} {:<10} ---", "-------", "-----");
 
     for label in config.service_labels() {
         let service_name = label.rsplit('.').next().unwrap_or(&label);
