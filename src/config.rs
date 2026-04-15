@@ -211,8 +211,7 @@ FRAMEWORK="{}"
         );
 
         let conf = self.conf_path();
-        fs::write(&conf, content)?;
-        fs::set_permissions(&conf, fs::Permissions::from_mode(0o600))?;
+        write_restricted(&conf, &content)?;
         Ok(())
     }
 

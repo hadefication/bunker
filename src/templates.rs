@@ -3,7 +3,7 @@ use crate::framework::Framework;
 use crate::framework::laravel::Laravel;
 
 pub fn cloudflared_config(config: &ProjectConfig) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
+    let home = std::env::var("HOME").expect("HOME not set");
     let cred_file = format!("{}/.cloudflared/{}.json", home, config.tunnel_uuid);
     format!(
         r#"tunnel: {tunnel_uuid}
