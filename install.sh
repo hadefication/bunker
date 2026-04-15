@@ -57,18 +57,35 @@ main() {
         exit 1
     fi
 
-    # Install
-    echo "==> Installing to ${INSTALL_DIR}/${BINARY}..."
+    # Install — prefer /usr/local/bin if writable (e.g. ran with sudo),
+    # otherwise fall back to ~/.local/bin which doesn't need root or Rust.
     if [ -w "$INSTALL_DIR" ]; then
-        mv "$TMP_BIN" "${INSTALL_DIR}/${BINARY}"
+        TARGET_DIR="$INSTALL_DIR"
     else
-        sudo mv "$TMP_BIN" "${INSTALL_DIR}/${BINARY}"
+        TARGET_DIR="${HOME}/.local/bin"
+        mkdir -p "$TARGET_DIR"
     fi
+
+    echo "==> Installing to ${TARGET_DIR}/${BINARY}..."
+    mv "$TMP_BIN" "${TARGET_DIR}/${BINARY}"
 
     rm -rf "$TMP_DIR"
 
-    echo "==> bunker ${VERSION} installed to ${INSTALL_DIR}/${BINARY}"
-    echo ""
+    echo "==> bunker ${VERSION} installed to ${TARGET_DIR}/${BINARY}"
+
+    # Check if the install dir is on PATH
+    case ":${PATH}:" in
+        *":${TARGET_DIR}:"*) ;;
+        *)
+            echo ""
+            echo "  WARNING: ${TARGET_DIR} is not in your PATH."
+            echo "  Add it by running:"
+            echo ""
+            echo "    echo 'export PATH=\"${TARGET_DIR}:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
+            echo ""
+            ;;
+    esac
+
     echo "Run 'bunker help' to get started."
 }
 
