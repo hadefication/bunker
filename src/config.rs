@@ -86,6 +86,15 @@ pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Validate a tunnel UUID: must be lowercase hex with dashes in 8-4-4-4-12 format
+fn validate_tunnel_uuid(uuid: &str) -> anyhow::Result<()> {
+    let re = regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")?;
+    if !re.is_match(uuid) {
+        anyhow::bail!("Invalid tunnel UUID: '{}'", uuid);
+    }
+    Ok(())
+}
+
 /// Validate a file path: must be absolute, no newlines, null bytes, `..` segments, or shell metacharacters
 fn validate_path(label: &str, path: &str) -> anyhow::Result<()> {
     if path.contains('\0') || path.contains('\n') || path.contains('\r') {
@@ -228,19 +237,26 @@ FRAMEWORK="{}"
         let frankenphp_path = get("FRANKENPHP_PATH")?;
         let cloudflared_path = get("CLOUDFLARED_PATH")?;
 
+        let domain = get("DOMAIN")?;
+        let tunnel_name = get("TUNNEL_NAME")?;
+        let tunnel_uuid = get("TUNNEL_UUID")?;
+
         validate_project_name(&project_name)?;
         validate_path("PROJECT_PATH", &project_path)?;
         validate_path("PHP_PATH", &php_path)?;
         validate_path("FRANKENPHP_PATH", &frankenphp_path)?;
         validate_path("CLOUDFLARED_PATH", &cloudflared_path)?;
+        validate_domain(&domain)?;
+        validate_tunnel_name(&tunnel_name)?;
+        validate_tunnel_uuid(&tunnel_uuid)?;
 
         Ok(Self {
             project_name,
             project_path,
             port: get("PORT")?.parse()?,
-            domain: get("DOMAIN")?,
-            tunnel_name: get("TUNNEL_NAME")?,
-            tunnel_uuid: get("TUNNEL_UUID")?,
+            domain,
+            tunnel_name,
+            tunnel_uuid,
             php_path,
             frankenphp_path,
             cloudflared_path,
@@ -443,6 +459,24 @@ mod tests {
         assert!(validate_domain("trailing.com.").is_err());
         assert!(validate_domain(&format!("{}.com", "a".repeat(64))).is_err());
         assert!(validate_domain(&format!("{}.com", "a".repeat(251))).is_err());
+    }
+
+    // --- validate_tunnel_uuid ---
+
+    #[test]
+    fn valid_uuids() {
+        assert!(validate_tunnel_uuid("00000000-0000-0000-0000-000000000000").is_ok());
+        assert!(validate_tunnel_uuid("a1b2c3d4-e5f6-7890-abcd-ef1234567890").is_ok());
+    }
+
+    #[test]
+    fn invalid_uuids() {
+        assert!(validate_tunnel_uuid("").is_err());
+        assert!(validate_tunnel_uuid("not-a-uuid").is_err());
+        assert!(validate_tunnel_uuid("00000000-0000-0000-0000-00000000000g").is_err());
+        assert!(validate_tunnel_uuid("00000000-0000-0000-0000-0000000000000").is_err()); // too long
+        assert!(validate_tunnel_uuid("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE").is_err()); // uppercase
+        assert!(validate_tunnel_uuid("00000000\n0000-0000-0000-000000000000").is_err());
     }
 
     // --- validate_path ---

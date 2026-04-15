@@ -12,6 +12,9 @@ pub fn start(project: Option<String>) -> anyhow::Result<()> {
     output::info(&format!("Starting {}...", name));
 
     let la_dir = launch_agents_dir();
+    let mut loaded = 0u32;
+    let mut failed = Vec::new();
+
     for label in config.service_labels() {
         let plist = la_dir.join(format!("{}.plist", label));
         if plist.exists() {
@@ -20,17 +23,39 @@ pub fn start(project: Option<String>) -> anyhow::Result<()> {
                 .arg(&plist)
                 .output();
 
-            if let Ok(out) = &result
-                && !out.status.success()
-            {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                let service = label.rsplit('.').next().unwrap_or(&label);
-                output::warn(&format!("{}: {}", service, stderr.trim()));
+            match &result {
+                Ok(out) if out.status.success() => loaded += 1,
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let service = label.rsplit('.').next().unwrap_or(&label);
+                    output::warn(&format!("{}: {}", service, stderr.trim()));
+                    failed.push(service.to_string());
+                }
+                Err(e) => {
+                    let service = label.rsplit('.').next().unwrap_or(&label);
+                    output::warn(&format!("{}: {}", service, e));
+                    failed.push(service.to_string());
+                }
             }
         }
     }
 
-    output::success(&format!("Started {}", name));
+    if loaded == 0 {
+        anyhow::bail!("No services loaded for {}. Run 'bunker init' first.", name);
+    }
+
+    if failed.is_empty() {
+        output::success(&format!("Started {}", name));
+    } else {
+        output::warn(&format!(
+            "Started {} ({} loaded, {} failed: {})",
+            name,
+            loaded,
+            failed.len(),
+            failed.join(", ")
+        ));
+    }
+
     status(Some(name))
 }
 

@@ -41,9 +41,9 @@ main() {
     TMP_BIN="${TMP_DIR}/${BINARY}"
 
     HTTP_CODE=$(curl -fSL -o "$TMP_BIN" -w "%{http_code}" "$URL" 2>/dev/null) || true
-    if [ ! -f "$TMP_BIN" ] || [ "$HTTP_CODE" = "404" ]; then
+    if [ ! -f "$TMP_BIN" ] || [ -z "$HTTP_CODE" ] || [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
         rm -rf "$TMP_DIR"
-        echo "Error: binary not found at ${URL}" >&2
+        echo "Error: download failed (HTTP ${HTTP_CODE:-unknown}) from ${URL}" >&2
         echo "Check https://github.com/${REPO}/releases for available assets." >&2
         exit 1
     fi

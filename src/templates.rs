@@ -237,9 +237,8 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
 }
 
 fn log_rotation_plist(label: &str, logs_dir: &str) -> String {
-    // Rotate .log files over 10MB, keep 5 old copies, remove oldest
-    let script = format!(
-        r#"for f in "{logs_dir}"/*.log; do \
+    // Script uses $BUNKER_LOGS_DIR env var — never interpolates paths into shell
+    let script = r#"for f in "$BUNKER_LOGS_DIR"/*.log; do \
   [ -f "$f" ] || continue; \
   size=$(stat -f%z "$f" 2>/dev/null || echo 0); \
   if [ "$size" -gt 10485760 ]; then \
@@ -250,9 +249,7 @@ fn log_rotation_plist(label: &str, logs_dir: &str) -> String {
     cp "$f" "$f.1" && : > "$f"; \
     [ -f "$f.5" ] && rm "$f.5"; \
   fi; \
-done"#,
-        logs_dir = logs_dir,
-    );
+done"#;
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -267,6 +264,11 @@ done"#,
         <string>-c</string>
         <string>{script}</string>
     </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>BUNKER_LOGS_DIR</key>
+        <string>{logs_dir}</string>
+    </dict>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -282,7 +284,8 @@ done"#,
 </plist>
 "#,
         label = xml_escape(label),
-        script = xml_escape(&script),
+        script = xml_escape(script),
+        logs_dir = xml_escape(logs_dir),
     )
 }
 

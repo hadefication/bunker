@@ -12,7 +12,7 @@ pub fn run() -> anyhow::Result<()> {
     let latest = fetch_latest_version()?;
     let latest_tag = latest.trim_start_matches('v');
 
-    if latest_tag == CURRENT_VERSION {
+    if !is_newer(latest_tag, CURRENT_VERSION) {
         output::success("Already up to date.");
         return Ok(());
     }
@@ -55,4 +55,49 @@ fn fetch_latest_version() -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("Could not parse latest release from GitHub."))?;
 
     Ok(tag.to_string())
+}
+
+/// Returns true if `latest` is strictly newer than `current` (semver comparison)
+fn is_newer(latest: &str, current: &str) -> bool {
+    let parse = |s: &str| -> Option<(u32, u32, u32)> {
+        let mut parts = s.split('.');
+        Some((
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+        ))
+    };
+    match (parse(latest), parse(current)) {
+        (Some(l), Some(c)) => l > c,
+        _ => false, // unparseable = don't update
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newer_version() {
+        assert!(is_newer("0.2.0", "0.1.0"));
+        assert!(is_newer("1.0.0", "0.9.9"));
+        assert!(is_newer("0.1.1", "0.1.0"));
+    }
+
+    #[test]
+    fn same_version() {
+        assert!(!is_newer("0.1.0", "0.1.0"));
+    }
+
+    #[test]
+    fn older_version() {
+        assert!(!is_newer("0.0.9", "0.1.0"));
+        assert!(!is_newer("0.1.0", "1.0.0"));
+    }
+
+    #[test]
+    fn unparseable_version() {
+        assert!(!is_newer("abc", "0.1.0"));
+        assert!(!is_newer("0.1.0", "xyz"));
+    }
 }
