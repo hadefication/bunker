@@ -50,6 +50,9 @@ pub fn run(project: Option<String>) -> anyhow::Result<()> {
 
     let svc_colors = ["green", "magenta", "cyan"];
     for (i, svc) in framework_services.iter().enumerate() {
+        // Safety: concurrently re-parses these strings through a shell.
+        // This is safe because validate_path() rejects `"` and other shell
+        // metacharacters in all path values loaded from config.
         let cmd = svc
             .command
             .iter()

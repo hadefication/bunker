@@ -1,4 +1,5 @@
 pub mod edit;
+pub mod info;
 pub mod init;
 pub mod lifecycle;
 pub mod list;

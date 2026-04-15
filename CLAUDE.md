@@ -57,7 +57,8 @@ bunker init [--yes] [--dry-run] [--name X] [--port X] [--domain X] [--tunnel X] 
 bunker start [project]
 bunker stop [project]
 bunker restart [project]
-bunker status [project]          # includes health check + domain
+bunker status [project]          # service table + health check + domain
+bunker info [project] [--verbose]  # app details (--verbose shows tunnel UUID + binary paths)
 bunker run [project]             # foreground via npx concurrently
 bunker logs [project] [--service=name] [--follow]
 bunker list
@@ -83,14 +84,16 @@ All user-supplied values are validated before use:
 - **File permissions**: `~/.bunker/` directories are 0o700, all generated files are 0o600
 - **Atomic symlinks**: plist symlinks use create-tmp-then-rename to prevent TOCTOU races
 - **Plist namespace**: labels prefixed `com.bunker.*` to avoid Apple namespace collisions
-- **No shell invocation**: all `Command::new()` uses direct argv, never `sh -c`
+- **No shell invocation**: all `Command::new()` uses direct argv, never `sh -c` (exception: `self-update` downloads install script to a temp file then executes via `sh`)
+- **Editor validation**: `edit` verifies `$EDITOR` binary exists before execution
+- **Info redaction**: `info` masks tunnel UUID and hides binary paths by default; `--verbose` reveals them
 - **Log hygiene**: Caddy access logs strip Authorization, Cookie, Set-Cookie, X-Api-Key headers
 - **Log rotation**: per-project logrotate LaunchAgent caps logs at 10MB with 5 rotated copies
 
 ## Cloudflare Integration
 
 - `init` creates the tunnel, generates `cloudflared.yml` with ingress rules, and routes DNS with `-f` (force overwrite)
-- `teardown` removes DNS route and deletes the tunnel
+- `teardown` deletes the tunnel and instructs the user to manually remove the CNAME from Cloudflare DNS (the CLI can create but not delete DNS records)
 - Named tunnels require a config YAML with ingress rules — the `--url` flag only works for quick tunnels
 
 ## Design Constraints

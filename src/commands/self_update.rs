@@ -18,14 +18,23 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     output::info(&format!("New version available: {}", latest_tag));
-    output::info("Running install script...");
+    output::info("Downloading install script...");
 
     let url = format!("https://raw.githubusercontent.com/{}/main/install.sh", REPO);
 
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(format!("curl -fsSL '{}' | sh", url))
+    let tmp = std::env::temp_dir().join("bunker-install.sh");
+    let download = Command::new("curl")
+        .args(["-fsSL", "-o"])
+        .arg(&tmp)
+        .arg(&url)
         .status()?;
+
+    if !download.success() {
+        anyhow::bail!("Failed to download install script.");
+    }
+
+    let status = Command::new("sh").arg(&tmp).status()?;
+    let _ = std::fs::remove_file(&tmp);
 
     if !status.success() {
         anyhow::bail!("Update failed.");

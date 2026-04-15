@@ -1,6 +1,8 @@
 use std::fs;
 use std::process::Command;
 
+use colored::Colorize;
+
 use crate::config::{ProjectConfig, bunker_home};
 use crate::output;
 
@@ -16,10 +18,16 @@ pub fn run() -> anyhow::Result<()> {
 
     println!();
     println!(
-        "  {:<20} {:<8} {:<10} \x1b[1mDOMAIN\x1b[0m",
-        "\x1b[1mPROJECT\x1b[0m", "\x1b[1mPORT\x1b[0m", "\x1b[1mSTATUS\x1b[0m"
+        "  {} {} {} {}",
+        format!("{:<20}", "APP").bold(),
+        format!("{:<8}", "PORT").bold(),
+        format!("{:<10}", "STATUS").bold(),
+        "DOMAIN".bold()
     );
-    println!("  {:<20} {:<8} {:<10} ------", "-------", "----", "------");
+    println!(
+        "  {:<20} {:<8} {:<10} ------",
+        "---", "----", "------"
+    );
 
     let mut entries: Vec<_> = fs::read_dir(&home)?
         .filter_map(|e| e.ok())
@@ -43,13 +51,13 @@ pub fn run() -> anyhow::Result<()> {
             .is_ok_and(|o| o.status.success());
 
         let status = if is_running {
-            "\x1b[32mrunning\x1b[0m"
+            format!("{:<10}", "running").green()
         } else {
-            "\x1b[31mstopped\x1b[0m"
+            format!("{:<10}", "stopped").red()
         };
 
         println!(
-            "  {:<20} {:<8} {:<20} {}",
+            "  {:<20} {:<8} {} {}",
             config.project_name, config.port, status, config.domain
         );
         found = true;

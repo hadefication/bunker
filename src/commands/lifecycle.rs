@@ -2,6 +2,8 @@ use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
+use colored::Colorize;
+
 use crate::config::{ProjectConfig, launch_agents_dir, resolve_project};
 use crate::output;
 
@@ -98,10 +100,15 @@ pub fn status(project: Option<String>) -> anyhow::Result<()> {
 
     println!();
     println!(
-        "  {:<12} {:<10} \x1b[1mPID\x1b[0m",
-        "\x1b[1mSERVICE\x1b[0m", "\x1b[1mSTATE\x1b[0m"
+        "  {} {} {}",
+        format!("{:<12}", "SERVICE").bold(),
+        format!("{:<10}", "STATE").bold(),
+        "PID".bold()
     );
-    println!("  {:<12} {:<10} ---", "-------", "-----");
+    println!(
+        "  {:<12} {:<10} ---",
+        "-------", "-----"
+    );
 
     for label in config.service_labels() {
         let service_name = label.rsplit('.').next().unwrap_or(&label);
@@ -113,25 +120,35 @@ pub fn status(project: Option<String>) -> anyhow::Result<()> {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 let pid = extract_pid(&stdout);
                 if let Some(p) = pid {
-                    ("\x1b[32mrunning\x1b[0m", format!("{}", p))
+                    (format!("{:<10}", "running").green(), format!("{}", p))
                 } else {
-                    ("\x1b[31mstopped\x1b[0m", "-".to_string())
+                    (format!("{:<10}", "stopped").red(), "-".to_string())
                 }
             }
-            _ => ("\x1b[2munloaded\x1b[0m", "-".to_string()),
+            _ => (format!("{:<10}", "unloaded").dimmed(), "-".to_string()),
         };
 
-        println!("  {:<12} {:<20} {}", service_name, state, pid);
+        println!("  {:<12} {} {}", service_name, state, pid);
     }
     println!();
 
-    // Health check — try connecting to the local port
-    let health = match TcpStream::connect_timeout(
-        &format!("127.0.0.1:{}", config.port).parse().unwrap(),
-        Duration::from_secs(2),
-    ) {
-        Ok(_) => format!("\x1b[32mreachable\x1b[0m on port {}", config.port),
-        Err(_) => format!("\x1b[31munreachable\x1b[0m on port {}", config.port),
+    // Health check — only attempt TCP connect if the server service is running
+    let server_label = format!("com.bunker.{}.server", config.project_name);
+    let server_running = Command::new("launchctl")
+        .args(["list", &server_label])
+        .output()
+        .is_ok_and(|o| o.status.success());
+
+    let health = if server_running {
+        match TcpStream::connect_timeout(
+            &format!("127.0.0.1:{}", config.port).parse().unwrap(),
+            Duration::from_secs(2),
+        ) {
+            Ok(_) => format!("{} on port {}", "reachable".green(), config.port),
+            Err(_) => format!("{} on port {}", "unreachable".red(), config.port),
+        }
+    } else {
+        format!("{} on port {}", "—".dimmed(), config.port)
     };
     println!("  Health:  {}", health);
     println!("  Domain:  {}", config.domain);

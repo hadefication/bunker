@@ -84,6 +84,16 @@ pub enum Command {
         project: Option<String>,
     },
 
+    /// Show app details
+    Info {
+        /// Project name (defaults to current directory)
+        project: Option<String>,
+
+        /// Show full details (tunnel UUID, binary paths)
+        #[arg(long, short)]
+        verbose: bool,
+    },
+
     /// Show service status
     Status {
         /// Project name (defaults to current directory)

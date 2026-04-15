@@ -34,6 +34,7 @@ fn main() {
             yes,
             dry_run,
         }),
+        Command::Info { project, verbose } => commands::info::run(project, verbose),
         Command::Start { project } => commands::lifecycle::start(project),
         Command::Stop { project } => commands::lifecycle::stop(project),
         Command::Restart { project } => commands::lifecycle::restart(project),

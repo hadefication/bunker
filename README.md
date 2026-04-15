@@ -57,6 +57,8 @@ bunker start
 bunker stop
 bunker restart
 bunker status                    # includes health check
+bunker info                      # show app details
+bunker info --verbose            # include tunnel UUID + binary paths
 
 # Run in foreground (for debugging)
 bunker run
