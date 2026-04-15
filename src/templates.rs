@@ -82,11 +82,14 @@ pub fn caddyfile(config: &ProjectConfig) -> String {
             roll_size 10MiB
             roll_keep 5
         }}
-        format json {{
-            delete request>headers>Authorization
-            delete request>headers>Cookie
-            delete request>headers>Set-Cookie
-            delete request>headers>X-Api-Key
+        format filter {{
+            wrap console
+            fields {{
+                request>headers>Authorization delete
+                request>headers>Cookie delete
+                request>headers>Set-Cookie delete
+                request>headers>X-Api-Key delete
+            }}
         }}
     }}
 }}
@@ -352,8 +355,8 @@ mod tests {
     fn caddyfile_strips_sensitive_headers() {
         let config = test_config();
         let cf = caddyfile(&config);
-        assert!(cf.contains("delete request>headers>Authorization"));
-        assert!(cf.contains("delete request>headers>Cookie"));
+        assert!(cf.contains("request>headers>Authorization delete"));
+        assert!(cf.contains("request>headers>Cookie delete"));
     }
 
     #[test]
