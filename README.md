@@ -9,12 +9,19 @@ Currently supports Laravel. More frameworks coming.
 - [FrankenPHP](https://frankenphp.dev/)
 - [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) (authenticated via `cloudflared login`)
 - PHP (Herd, Homebrew, or system)
-- [Rust toolchain](https://rustup.rs/) (for building from source)
 
 ## Install
 
 ```bash
-git clone git@github.com:hadefication/bunker.git
+curl -fsSL https://raw.githubusercontent.com/hadefication/bunker/main/install.sh | sh
+```
+
+### Build from source
+
+Requires the [Rust toolchain](https://rustup.rs/).
+
+```bash
+git clone https://github.com/hadefication/bunker.git
 cd bunker
 cargo install --path .
 ```

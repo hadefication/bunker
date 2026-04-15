@@ -45,18 +45,21 @@ pub fn run(project: Option<String>, yes: bool) -> anyhow::Result<()> {
     // deletion requires the Cloudflare API or dashboard.
     let is_custom_domain = !config.domain.ends_with(".cfargotunnel.com");
     if is_custom_domain {
-        let zone = config.domain
-            .splitn(2, '.')
-            .nth(1)
-            .unwrap_or(&config.domain);
+        let zone = config
+            .domain
+            .split_once('.')
+            .map_or(config.domain.as_str(), |(_, z)| z);
         output::warn(&format!(
-            "The CNAME record for {} must be removed manually.", config.domain
+            "The CNAME record for {} must be removed manually.",
+            config.domain
         ));
         output::info(&format!(
-            "  → Cloudflare Dashboard > {} > DNS > Records", zone
+            "  → Cloudflare Dashboard > {} > DNS > Records",
+            zone
         ));
         output::info(&format!(
-            "  → Find the CNAME entry for '{}' and delete it", config.domain
+            "  → Find the CNAME entry for '{}' and delete it",
+            config.domain
         ));
         output::info("  Leaving it will show a Cloudflare Tunnel error page to visitors.");
     }
