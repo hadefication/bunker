@@ -13,6 +13,8 @@ cargo build                    # debug build
 cargo build --release          # release build
 cargo run -- <command>         # run during development
 cargo run -- help              # see all commands
+cargo test                     # run all tests
+cargo test <test_name>         # run a single test
 ```
 
 Install locally:
@@ -27,30 +29,59 @@ cargo install --path .         # installs to ~/.cargo/bin/bunker
 - **macOS LaunchAgents** for service management (3-4 plists per project: server, tunnel, queue worker, and optionally scheduler)
 - **Project resolution**: explicit arg → CWD basename lookup in `~/.bunker/` → error
 - **Framework trait** — framework-specific logic (detection, templates, services) is behind a trait. Adding a new framework means implementing the trait, not modifying core commands.
+- **Non-interactive mode** — `--yes` flag and CLI args on `init`/`teardown` for AI agents and scripting
+- **Dry-run** — `--dry-run` on `init` previews all generated config without side effects
 
 ### Per-Project Config Layout (`~/.bunker/<project>/`)
 
-- `bunker.conf` — key=value config sourced/parsed by the CLI
-- `Caddyfile` — FrankenPHP config (hardened: security headers, dotfile blocking, gzip/zstd, JSON access logs)
+- `bunker.conf` — key=value config parsed by the CLI
+- `Caddyfile` — FrankenPHP config (hardened: security headers, HSTS, dotfile blocking, direct PHP blocking, gzip/zstd, JSON access logs)
+- `cloudflared.yml` — cloudflared tunnel config with ingress rules mapping hostname to localhost:port
 - `com.<project>.{server,tunnel,queue,scheduler}.plist` — LaunchAgent definitions (scheduler is optional, gated by `SCHEDULER_ENABLED` in config)
 - `logs/` — stdout/stderr for each service + caddy access log
 
 ### Key Crates
 
-- `clap` (derive) — CLI subcommands and arg parsing
+- `clap` (derive) + `clap_complete` — CLI subcommands, arg parsing, shell completions
 - `dialoguer` — interactive prompts for `init`
 - `colored` — terminal colors
-- `serde` — config serialization
+- `anyhow` — error handling
+- `regex` — UUID extraction from cloudflared output
+- `serde` + `serde_json` — config and JSON parsing
 - `which` — binary path detection
 
 ## CLI Commands
 
-`bunker init` | `start` | `stop` | `restart` | `status` | `run` | `logs` | `list` | `teardown` | `edit`
+```
+bunker init [--yes] [--dry-run] [--name X] [--port X] [--domain X] [--tunnel X] [--scheduler]
+bunker start [project]
+bunker stop [project]
+bunker restart [project]
+bunker status [project]          # includes health check + domain
+bunker run [project]             # foreground via npx concurrently
+bunker logs [project] [--service=name] [--follow]
+bunker list
+bunker update [project]          # re-generate configs from bunker.conf
+bunker teardown [project] [--yes]
+bunker edit [project]
+bunker completions <shell>       # bash, zsh, fish
+```
 
-- `init` — interactive setup, auto-detects paths, scaffolds config, symlinks plists
-- `run` — foreground mode via `npx concurrently` (debugging)
-- `logs` — tail from `~/.bunker/<project>/logs/`, supports `--service` and `--follow`
-- `teardown` — stops services, removes symlinks, optionally removes config dir
+## Input Validation
+
+All user-supplied values are validated before use:
+- **Project names**: `[a-z0-9-]` only
+- **Tunnel names**: `[a-zA-Z0-9-]`, no leading dash
+- **Domains**: must contain `.`, `[a-zA-Z0-9.-]`, no leading dash
+- **Paths**: must be absolute, no newlines or null bytes
+- **Plist values**: XML-escaped before interpolation
+- **Caddyfile paths**: quoted to handle spaces
+
+## Cloudflare Integration
+
+- `init` creates the tunnel, generates `cloudflared.yml` with ingress rules, and routes DNS with `-f` (force overwrite)
+- `teardown` removes DNS route and deletes the tunnel
+- Named tunnels require a config YAML with ingress rules — the `--url` flag only works for quick tunnels
 
 ## Design Constraints
 
@@ -59,20 +90,3 @@ cargo install --path .         # installs to ~/.cargo/bin/bunker
 - External access via cloudflared named tunnels only (no direct port exposure)
 - Caddyfile binds to localhost; tunnel handles public routing
 - Framework-aware — Laravel first, but framework-specific logic lives behind a trait so adding new frameworks is additive
-
-## Testing
-
-```bash
-cargo test                     # run all tests
-cargo test <test_name>         # run a single test
-```
-
-Manual integration testing against a real Laravel project:
-```bash
-cargo run -- init              # in a Laravel project dir
-cargo run -- start
-cargo run -- status
-cargo run -- logs --follow
-cargo run -- stop
-cargo run -- teardown
-```

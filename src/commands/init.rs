@@ -89,6 +89,7 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
             .unwrap_or("project"),
     );
     let project_name = prompt_or("Project name", args.name, Some(default_name), args.yes || dry_run)?;
+    crate::config::validate_project_name(&project_name)?;
 
     // Detect binaries
     let detected_php = which::which("php").map(|p| p.display().to_string()).ok();
@@ -126,6 +127,7 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
 
     // Tunnel name
     let tunnel_name = prompt_or("Tunnel name", args.tunnel, Some(project_name.clone()), args.yes || dry_run)?;
+    crate::config::validate_tunnel_name(&tunnel_name)?;
 
     // Scheduler (Laravel-specific)
     let scheduler_enabled = matches!(framework, FrameworkKind::Laravel)
@@ -140,6 +142,9 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
     let (tunnel_uuid, domain) = if dry_run {
         let uuid = "<tunnel-uuid>".to_string();
         let domain = args.domain.unwrap_or_else(|| format!("{}.cfargotunnel.com", uuid));
+        if !domain.ends_with(".cfargotunnel.com") {
+            crate::config::validate_domain(&domain)?;
+        }
         (uuid, domain)
     } else {
         output::info(&format!("Setting up cloudflared tunnel '{}'...", tunnel_name));
@@ -148,6 +153,7 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
 
         let cf_domain = format!("{}.cfargotunnel.com", uuid);
         let domain = prompt_or("Domain", args.domain, Some(cf_domain), args.yes)?;
+        crate::config::validate_domain(&domain)?;
         (uuid, domain)
     };
 
@@ -192,6 +198,12 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
         }
         println!();
 
+        println!("  --- cloudflared.yml ---");
+        for line in templates::cloudflared_config(&config).lines() {
+            println!("  {}", line);
+        }
+        println!();
+
         let plists = templates::generate_plists(&config);
         println!("  --- Plists ({}) ---", plists.len());
         for (filename, _) in &plists {
@@ -217,6 +229,10 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
     let caddyfile_content = templates::caddyfile(&config);
     fs::write(config.project_dir().join("Caddyfile"), caddyfile_content)?;
 
+    // Generate cloudflared config
+    let cf_config = templates::cloudflared_config(&config);
+    fs::write(config.project_dir().join("cloudflared.yml"), cf_config)?;
+
     // Generate plists
     let plists = templates::generate_plists(&config);
     let la_dir = launch_agents_dir();
@@ -238,7 +254,7 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
     if is_custom_domain {
         output::info(&format!("Routing DNS for {}...", domain));
         let dns_result = Command::new(&cloudflared_path)
-            .args(["tunnel", "route", "dns", &tunnel_name, &domain])
+            .args(["tunnel", "route", "dns", "-f", &tunnel_uuid, &domain])
             .output();
 
         match dns_result {
@@ -307,6 +323,11 @@ fn get_or_create_tunnel(cloudflared: &str, name: &str) -> anyhow::Result<String>
         .args(["tunnel", "create", name])
         .output()?;
 
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to create tunnel: {}", stderr.trim());
+    }
+
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -318,7 +339,7 @@ fn get_or_create_tunnel(cloudflared: &str, name: &str) -> anyhow::Result<String>
     let uuid = uuid_re
         .find(&combined)
         .map(|m| m.as_str().to_string())
-        .ok_or_else(|| anyhow::anyhow!("Failed to create tunnel. Check cloudflared auth."))?;
+        .ok_or_else(|| anyhow::anyhow!("Tunnel created but could not extract UUID from output."))?;
 
     Ok(uuid)
 }

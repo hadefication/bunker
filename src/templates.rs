@@ -2,6 +2,27 @@ use crate::config::ProjectConfig;
 use crate::framework::laravel::Laravel;
 use crate::framework::Framework;
 
+pub fn cloudflared_config(config: &ProjectConfig) -> String {
+    format!(
+        r#"tunnel: {tunnel_uuid}
+credentials-file: {cred_file}
+
+ingress:
+  - hostname: {domain}
+    service: http://localhost:{port}
+  - service: http_status:404
+"#,
+        tunnel_uuid = config.tunnel_uuid,
+        cred_file = format!(
+            "{}/.cloudflared/{}.json",
+            std::env::var("HOME").unwrap_or_default(),
+            config.tunnel_uuid
+        ),
+        domain = config.domain,
+        port = config.port,
+    )
+}
+
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -23,7 +44,7 @@ pub fn caddyfile(config: &ProjectConfig) -> String {
 
     format!(
         r#":{port} {{
-    root * {project_path}/public
+    root * "{project_path}/public"
 
     # Security headers
     header {{
@@ -47,7 +68,7 @@ pub fn caddyfile(config: &ProjectConfig) -> String {
 
     # Access logging
     log {{
-        output file {logs_dir}/caddy-access.log {{
+        output file "{logs_dir}/caddy-access.log" {{
             roll_size 10MiB
             roll_keep 5
         }}
@@ -151,10 +172,9 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
             config.cloudflared_path.clone(),
             "tunnel".to_string(),
             "--no-autoupdate".to_string(),
+            "--config".to_string(),
+            config.project_dir().join("cloudflared.yml").display().to_string(),
             "run".to_string(),
-            "--url".to_string(),
-            format!("localhost:{}", config.port),
-            config.tunnel_name.clone(),
         ],
         &config.project_path,
         &format!("{}/cloudflared-stdout.log", logs_str),
@@ -189,4 +209,111 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
     }
 
     plists
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framework::FrameworkKind;
+
+    fn test_config() -> ProjectConfig {
+        ProjectConfig {
+            project_name: "test-app".to_string(),
+            project_path: "/tmp/test-app".to_string(),
+            port: 8700,
+            domain: "test.example.com".to_string(),
+            tunnel_name: "test-app".to_string(),
+            tunnel_uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+            php_path: "/usr/bin/php".to_string(),
+            frankenphp_path: "/usr/local/bin/frankenphp".to_string(),
+            cloudflared_path: "/usr/local/bin/cloudflared".to_string(),
+            scheduler_enabled: false,
+            framework: FrameworkKind::Laravel,
+        }
+    }
+
+    #[test]
+    fn xml_escape_special_chars() {
+        assert_eq!(xml_escape("<test>&\""), "&lt;test&gt;&amp;&quot;");
+    }
+
+    #[test]
+    fn xml_escape_clean_string() {
+        assert_eq!(xml_escape("hello"), "hello");
+    }
+
+    #[test]
+    fn caddyfile_contains_port() {
+        let config = test_config();
+        let cf = caddyfile(&config);
+        assert!(cf.contains(":8700 {"));
+    }
+
+    #[test]
+    fn caddyfile_quoted_paths() {
+        let config = test_config();
+        let cf = caddyfile(&config);
+        assert!(cf.contains(r#"root * "/tmp/test-app/public""#));
+    }
+
+    #[test]
+    fn caddyfile_has_hsts() {
+        let config = test_config();
+        let cf = caddyfile(&config);
+        assert!(cf.contains("Strict-Transport-Security"));
+    }
+
+    #[test]
+    fn caddyfile_blocks_direct_php() {
+        let config = test_config();
+        let cf = caddyfile(&config);
+        assert!(cf.contains("@directPhp"));
+    }
+
+    #[test]
+    fn cloudflared_config_has_ingress() {
+        let config = test_config();
+        let cf = cloudflared_config(&config);
+        assert!(cf.contains("ingress:"));
+        assert!(cf.contains("hostname: test.example.com"));
+        assert!(cf.contains("http://localhost:8700"));
+        assert!(cf.contains("http_status:404"));
+    }
+
+    #[test]
+    fn cloudflared_config_has_credentials() {
+        let config = test_config();
+        let cf = cloudflared_config(&config);
+        assert!(cf.contains("tunnel: 00000000-0000-0000-0000-000000000000"));
+        assert!(cf.contains("credentials-file:"));
+    }
+
+    #[test]
+    fn plist_xml_escapes_values() {
+        let p = plist(
+            "com.test.server",
+            &["/path/with <special>&chars".to_string()],
+            "/tmp/test",
+            "/tmp/stdout.log",
+            "/tmp/stderr.log",
+            false,
+        );
+        assert!(p.contains("&lt;special&gt;&amp;chars"));
+        assert!(!p.contains("<special>"));
+    }
+
+    #[test]
+    fn generate_plists_count_without_scheduler() {
+        let config = test_config();
+        let plists = generate_plists(&config);
+        assert_eq!(plists.len(), 3); // server, tunnel, queue
+    }
+
+    #[test]
+    fn generate_plists_count_with_scheduler() {
+        let mut config = test_config();
+        config.scheduler_enabled = true;
+        let plists = generate_plists(&config);
+        assert_eq!(plists.len(), 4); // server, tunnel, queue, scheduler
+    }
 }

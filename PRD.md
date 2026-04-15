@@ -56,7 +56,7 @@ Framework-specific logic is behind a trait so adding new frameworks doesn't touc
 └── <project-name>/
     ├── bunker.conf          # project config (key=value, sourced by the CLI)
     ├── Caddyfile
-    ├── deploy.sh            # legacy/standalone management (optional)
+    ├── cloudflared.yml      # cloudflared tunnel config with ingress rules
     ├── com.<project>.server.plist
     ├── com.<project>.tunnel.plist
     ├── com.<project>.queue.plist
@@ -147,6 +147,14 @@ List all bunkered projects with their status (running/stopped), port, and domain
 ### `bunker edit [project]`
 
 Open `~/.bunker/<project>/` in the user's `$EDITOR` for manual config tweaks.
+
+### `bunker update [project]`
+
+Re-generate Caddyfile, plists, and cloudflared.yml from existing `bunker.conf`. Use after manually editing config via `bunker edit`. Restart services afterward to apply.
+
+### `bunker completions <shell>`
+
+Generate shell completions for bash, zsh, or fish. Example: `bunker completions zsh > ~/.zfunc/_bunker`
 
 ## Project Resolution
 

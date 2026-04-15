@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 
-use crate::config::bunker_home;
+use crate::config::{bunker_home, ProjectConfig};
 use crate::output;
 
 pub fn run() -> anyhow::Result<()> {
@@ -32,23 +32,14 @@ pub fn run() -> anyhow::Result<()> {
     entries.sort_by_key(|e| e.file_name());
 
     for entry in entries {
-        let conf_path = entry.path().join("bunker.conf");
-        let content = fs::read_to_string(&conf_path)?;
+        let dir_name = entry.file_name().to_string_lossy().to_string();
 
-        let get = |key: &str| -> String {
-            content
-                .lines()
-                .find(|l| l.starts_with(key))
-                .and_then(|l| l.split_once('='))
-                .map(|(_, v)| v.trim_matches('"').to_string())
-                .unwrap_or_default()
+        let config = match ProjectConfig::load(&dir_name) {
+            Ok(c) => c,
+            Err(_) => continue, // skip invalid configs
         };
 
-        let name = get("PROJECT_NAME");
-        let port = get("PORT");
-        let domain = get("DOMAIN");
-
-        let server_label = format!("com.{}.server", name);
+        let server_label = format!("com.{}.server", config.project_name);
         let is_running = Command::new("launchctl")
             .args(["list", &server_label])
             .output()
@@ -60,7 +51,10 @@ pub fn run() -> anyhow::Result<()> {
             "\x1b[31mstopped\x1b[0m"
         };
 
-        println!("  {:<20} {:<8} {:<20} {}", name, port, status, domain);
+        println!(
+            "  {:<20} {:<8} {:<20} {}",
+            config.project_name, config.port, status, config.domain
+        );
         found = true;
     }
 

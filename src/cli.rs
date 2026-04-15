@@ -118,4 +118,16 @@ pub enum Command {
         /// Project name (defaults to current directory)
         project: Option<String>,
     },
+
+    /// Re-generate configs from bunker.conf (Caddyfile, plists, cloudflared.yml)
+    Update {
+        /// Project name (defaults to current directory)
+        project: Option<String>,
+    },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate for: bash, zsh, fish
+        shell: String,
+    },
 }

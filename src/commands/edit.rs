@@ -16,7 +16,9 @@ pub fn run(project: Option<String>) -> anyhow::Result<()> {
         editor
     ));
 
-    let status = Command::new(&editor).arg(&project_dir).status()?;
+    let mut parts = editor.split_whitespace();
+    let bin = parts.next().unwrap_or("vim");
+    let status = Command::new(bin).args(parts).arg(&project_dir).status()?;
 
     if !status.success() {
         anyhow::bail!("Editor exited with non-zero status");

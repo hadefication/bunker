@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::framework::FrameworkKind;
 
 /// Validate a project name: only lowercase alphanumeric and hyphens
-fn validate_project_name(name: &str) -> anyhow::Result<()> {
+pub fn validate_project_name(name: &str) -> anyhow::Result<()> {
     if name.is_empty() {
         anyhow::bail!("Project name cannot be empty");
     }
@@ -15,6 +15,43 @@ fn validate_project_name(name: &str) -> anyhow::Result<()> {
         anyhow::bail!(
             "Invalid project name '{}': only lowercase letters, digits, and hyphens allowed",
             name
+        );
+    }
+    Ok(())
+}
+
+/// Validate a tunnel name: alphanumeric and hyphens, no leading dash
+pub fn validate_tunnel_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("Tunnel name cannot be empty");
+    }
+    if name.starts_with('-') {
+        anyhow::bail!("Tunnel name '{}' must not start with a hyphen", name);
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        anyhow::bail!(
+            "Invalid tunnel name '{}': only letters, digits, and hyphens allowed",
+            name
+        );
+    }
+    Ok(())
+}
+
+/// Validate a domain: must contain a dot, no leading dash, reasonable DNS charset
+pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
+    if domain.is_empty() {
+        anyhow::bail!("Domain cannot be empty");
+    }
+    if domain.starts_with('-') {
+        anyhow::bail!("Domain '{}' must not start with a hyphen", domain);
+    }
+    if !domain.contains('.') {
+        anyhow::bail!("Domain '{}' must contain at least one dot", domain);
+    }
+    if !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
+        anyhow::bail!(
+            "Invalid domain '{}': only letters, digits, hyphens, and dots allowed",
+            domain
         );
     }
     Ok(())
@@ -177,7 +214,15 @@ fn parse_conf(content: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((key, val)) = line.split_once('=') {
-            let val = val.trim_matches('"');
+            // Strip surrounding quotes, then strip inline comments outside quotes
+            let val = val.trim();
+            let val = if let Some(inner) = val.strip_prefix('"') {
+                // Quoted value: take content up to closing quote
+                inner.split_once('"').map(|(s, _)| s).unwrap_or(inner)
+            } else {
+                // Unquoted value: strip inline comments
+                val.split('#').next().unwrap_or(val).trim()
+            };
             map.insert(key.to_string(), val.to_string());
         }
     }
@@ -203,9 +248,11 @@ pub fn resolve_project(project: Option<String>) -> anyhow::Result<String> {
         .unwrap_or_default()
         .to_string();
 
-    let conf = bunker_home().join(&cwd_name).join("bunker.conf");
-    if conf.exists() {
-        return Ok(cwd_name);
+    if validate_project_name(&cwd_name).is_ok() {
+        let conf = bunker_home().join(&cwd_name).join("bunker.conf");
+        if conf.exists() {
+            return Ok(cwd_name);
+        }
     }
 
     anyhow::bail!("Not a bunkered project. Run 'bunker init' first.");
@@ -220,6 +267,9 @@ pub fn port_available(port: u16) -> bool {
 pub fn suggest_port(base: u16) -> u16 {
     let mut port = base;
     while !port_available(port) {
+        if port == u16::MAX {
+            return base; // give up, return the base and let the user decide
+        }
         port += 1;
     }
     port
@@ -240,4 +290,155 @@ pub fn to_kebab(s: &str) -> String {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- to_kebab ---
+
+    #[test]
+    fn kebab_simple() {
+        assert_eq!(to_kebab("MyProject"), "myproject");
+    }
+
+    #[test]
+    fn kebab_spaces_and_special() {
+        assert_eq!(to_kebab("My Cool Project!"), "my-cool-project");
+    }
+
+    #[test]
+    fn kebab_already_kebab() {
+        assert_eq!(to_kebab("my-project"), "my-project");
+    }
+
+    #[test]
+    fn kebab_consecutive_special() {
+        assert_eq!(to_kebab("my---project"), "my-project");
+    }
+
+    #[test]
+    fn kebab_leading_trailing() {
+        assert_eq!(to_kebab("--my-project--"), "my-project");
+    }
+
+    // --- validate_project_name ---
+
+    #[test]
+    fn valid_project_names() {
+        assert!(validate_project_name("my-app").is_ok());
+        assert!(validate_project_name("app123").is_ok());
+        assert!(validate_project_name("a").is_ok());
+    }
+
+    #[test]
+    fn invalid_project_names() {
+        assert!(validate_project_name("").is_err());
+        assert!(validate_project_name("My-App").is_err());
+        assert!(validate_project_name("../evil").is_err());
+        assert!(validate_project_name("my app").is_err());
+        assert!(validate_project_name("my_app").is_err());
+    }
+
+    // --- validate_tunnel_name ---
+
+    #[test]
+    fn valid_tunnel_names() {
+        assert!(validate_tunnel_name("my-tunnel").is_ok());
+        assert!(validate_tunnel_name("Tunnel123").is_ok());
+    }
+
+    #[test]
+    fn invalid_tunnel_names() {
+        assert!(validate_tunnel_name("").is_err());
+        assert!(validate_tunnel_name("-leading").is_err());
+        assert!(validate_tunnel_name("has spaces").is_err());
+        assert!(validate_tunnel_name("--config").is_err());
+    }
+
+    // --- validate_domain ---
+
+    #[test]
+    fn valid_domains() {
+        assert!(validate_domain("example.com").is_ok());
+        assert!(validate_domain("my-app.example.com").is_ok());
+        assert!(validate_domain("a.b.c.d.com").is_ok());
+    }
+
+    #[test]
+    fn invalid_domains() {
+        assert!(validate_domain("").is_err());
+        assert!(validate_domain("nodot").is_err());
+        assert!(validate_domain("-leading.com").is_err());
+        assert!(validate_domain("has space.com").is_err());
+    }
+
+    // --- validate_path ---
+
+    #[test]
+    fn valid_paths() {
+        assert!(validate_path("test", "/usr/bin/php").is_ok());
+        assert!(validate_path("test", "/opt/homebrew/bin/frankenphp").is_ok());
+    }
+
+    #[test]
+    fn invalid_paths() {
+        assert!(validate_path("test", "relative/path").is_err());
+        assert!(validate_path("test", "/path/with\nnewline").is_err());
+        assert!(validate_path("test", "/path/with\0null").is_err());
+    }
+
+    // --- parse_conf ---
+
+    #[test]
+    fn parse_conf_basic() {
+        let content = r#"
+PROJECT_NAME="my-app"
+PORT=8700
+"#;
+        let map = parse_conf(content);
+        assert_eq!(map.get("PROJECT_NAME").unwrap(), "my-app");
+        assert_eq!(map.get("PORT").unwrap(), "8700");
+    }
+
+    #[test]
+    fn parse_conf_inline_comment() {
+        let content = "PORT=8700 # default port\n";
+        let map = parse_conf(content);
+        assert_eq!(map.get("PORT").unwrap(), "8700");
+    }
+
+    #[test]
+    fn parse_conf_quoted_with_hash() {
+        let content = r#"DOMAIN="my-app.example.com""#;
+        let map = parse_conf(content);
+        assert_eq!(map.get("DOMAIN").unwrap(), "my-app.example.com");
+    }
+
+    #[test]
+    fn parse_conf_comment_lines() {
+        let content = "# this is a comment\nPORT=8700\n";
+        let map = parse_conf(content);
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("PORT").unwrap(), "8700");
+    }
+
+    #[test]
+    fn parse_conf_path_with_spaces() {
+        let content = r#"PHP_PATH="/Users/me/Library/Application Support/Herd/bin/php""#;
+        let map = parse_conf(content);
+        assert_eq!(
+            map.get("PHP_PATH").unwrap(),
+            "/Users/me/Library/Application Support/Herd/bin/php"
+        );
+    }
+
+    // --- suggest_port ---
+
+    #[test]
+    fn suggest_port_returns_port() {
+        let port = suggest_port(49152); // high port, likely available
+        assert!(port >= 49152);
+    }
 }

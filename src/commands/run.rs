@@ -27,8 +27,9 @@ pub fn run(project: Option<String>) -> anyhow::Result<()> {
             config.project_dir().join("Caddyfile").display()
         ),
         format!(
-            "\"{}\" tunnel --no-autoupdate run --url localhost:{} {}",
-            config.cloudflared_path, config.port, config.tunnel_name
+            "\"{}\" tunnel --no-autoupdate --config \"{}\" run",
+            config.cloudflared_path,
+            config.project_dir().join("cloudflared.yml").display()
         ),
     ];
 

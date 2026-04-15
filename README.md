@@ -19,17 +19,37 @@ cd bunker
 cargo install --path .
 ```
 
+### Shell Completions
+
+```bash
+# zsh
+bunker completions zsh > ~/.zfunc/_bunker
+
+# bash
+bunker completions bash > /usr/local/etc/bash_completion.d/bunker
+
+# fish
+bunker completions fish > ~/.config/fish/completions/bunker.fish
+```
+
 ## Usage
 
 ```bash
 # Set up a project (run from your project directory)
 bunker init
 
+# Non-interactive (for scripts and AI agents)
+bunker init --yes --domain my-app.example.com
+bunker init --yes --name my-app --port 8700 --domain my-app.example.com --scheduler
+
+# Preview without creating anything
+bunker init --dry-run
+
 # Manage services
 bunker start
 bunker stop
 bunker restart
-bunker status
+bunker status                    # includes health check
 
 # Run in foreground (for debugging)
 bunker run
@@ -41,8 +61,12 @@ bunker logs --service=server --follow
 # List all bunkered projects
 bunker list
 
+# Re-generate configs after editing bunker.conf
+bunker update
+
 # Remove a project's bunker config
 bunker teardown
+bunker teardown --yes            # skip prompts
 
 # Edit config manually
 bunker edit
@@ -50,7 +74,7 @@ bunker edit
 
 ## How It Works
 
-`bunker init` walks you through setup — detects your framework, PHP and binary paths, picks an unused port, creates a cloudflared tunnel, and routes DNS. All config is written to `~/.bunker/<project>/`, nothing touches your project repo.
+`bunker init` walks you through setup — detects your framework, PHP and binary paths, picks an unused port, creates a cloudflared tunnel, routes DNS, and generates all config. Everything is written to `~/.bunker/<project>/`, nothing touches your project repo.
 
 Services run as macOS LaunchAgents: auto-start on login, restart on crash, managed via `launchctl`.
 

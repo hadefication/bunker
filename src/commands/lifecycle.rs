@@ -1,4 +1,6 @@
+use std::net::TcpStream;
 use std::process::Command;
+use std::time::Duration;
 
 use crate::config::{launch_agents_dir, resolve_project, ProjectConfig};
 use crate::output;
@@ -13,10 +15,18 @@ pub fn start(project: Option<String>) -> anyhow::Result<()> {
     for label in config.service_labels() {
         let plist = la_dir.join(format!("{}.plist", label));
         if plist.exists() {
-            let _ = Command::new("launchctl")
+            let result = Command::new("launchctl")
                 .args(["load", "-w"])
                 .arg(&plist)
                 .output();
+
+            if let Ok(out) = &result {
+                if !out.status.success() {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let service = label.rsplit('.').next().unwrap_or(&label);
+                    output::warn(&format!("{}: {}", service, stderr.trim()));
+                }
+            }
         }
     }
 
@@ -34,7 +44,15 @@ pub fn stop(project: Option<String>) -> anyhow::Result<()> {
     for label in config.service_labels() {
         let plist = la_dir.join(format!("{}.plist", label));
         if plist.exists() {
-            let _ = Command::new("launchctl").arg("unload").arg(&plist).output();
+            let result = Command::new("launchctl").arg("unload").arg(&plist).output();
+
+            if let Ok(out) = &result {
+                if !out.status.success() {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    let service = label.rsplit('.').next().unwrap_or(&label);
+                    output::warn(&format!("{}: {}", service, stderr.trim()));
+                }
+            }
         }
     }
 
@@ -84,6 +102,18 @@ pub fn status(project: Option<String>) -> anyhow::Result<()> {
 
         println!("  {:<12} {:<20} {}", service_name, state, pid);
     }
+    println!();
+
+    // Health check — try connecting to the local port
+    let health = match TcpStream::connect_timeout(
+        &format!("127.0.0.1:{}", config.port).parse().unwrap(),
+        Duration::from_secs(2),
+    ) {
+        Ok(_) => format!("\x1b[32mreachable\x1b[0m on port {}", config.port),
+        Err(_) => format!("\x1b[31munreachable\x1b[0m on port {}", config.port),
+    };
+    println!("  Health:  {}", health);
+    println!("  Domain:  {}", config.domain);
     println!();
 
     Ok(())
