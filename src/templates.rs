@@ -24,10 +24,20 @@ ingress:
 }
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    s.chars()
+        .filter(|c| {
+            // Strip XML 1.0 forbidden control characters (U+0000-0008, U+000B, U+000C, U+000E-001F)
+            !matches!(*c as u32, 0x00..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F)
+        })
+        .map(|c| match c {
+            '&' => "&amp;".to_string(),
+            '<' => "&lt;".to_string(),
+            '>' => "&gt;".to_string(),
+            '"' => "&quot;".to_string(),
+            '\'' => "&apos;".to_string(),
+            _ => c.to_string(),
+        })
+        .collect()
 }
 
 pub fn caddyfile(config: &ProjectConfig) -> String {
@@ -72,7 +82,12 @@ pub fn caddyfile(config: &ProjectConfig) -> String {
             roll_size 10MiB
             roll_keep 5
         }}
-        format json
+        format json {{
+            delete request>headers>Authorization
+            delete request>headers>Cookie
+            delete request>headers>Set-Cookie
+            delete request>headers>X-Api-Key
+        }}
     }}
 }}
 "#,
@@ -148,7 +163,7 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
     let mut plists = Vec::new();
 
     // Server plist
-    let server_label = format!("com.{}.server", config.project_name);
+    let server_label = format!("com.bunker.{}.server", config.project_name);
     let server_plist = plist(
         &server_label,
         &[
@@ -165,7 +180,7 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
     plists.push((format!("{}.plist", server_label), server_plist));
 
     // Tunnel plist
-    let tunnel_label = format!("com.{}.tunnel", config.project_name);
+    let tunnel_label = format!("com.bunker.{}.tunnel", config.project_name);
     let tunnel_plist = plist(
         &tunnel_label,
         &[
@@ -196,7 +211,7 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
     };
 
     for svc in framework_services {
-        let label = format!("com.{}.{}", config.project_name, svc.label_suffix);
+        let label = format!("com.bunker.{}.{}", config.project_name, svc.label_suffix);
         let svc_plist = plist(
             &label,
             &svc.command,
@@ -209,7 +224,7 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
     }
 
     // Log rotation plist — runs daily, keeps 5 rotated copies, 10MB max per file
-    let logrotate_label = format!("com.{}.logrotate", config.project_name);
+    let logrotate_label = format!("com.bunker.{}.logrotate", config.project_name);
     let logrotate_plist = log_rotation_plist(&logrotate_label, &logs_str);
     plists.push((format!("{}.plist", logrotate_label), logrotate_plist));
 
@@ -289,7 +304,15 @@ mod tests {
 
     #[test]
     fn xml_escape_special_chars() {
-        assert_eq!(xml_escape("<test>&\""), "&lt;test&gt;&amp;&quot;");
+        assert_eq!(xml_escape("<test>&\"'"), "&lt;test&gt;&amp;&quot;&apos;");
+    }
+
+    #[test]
+    fn xml_escape_strips_control_chars() {
+        assert_eq!(xml_escape("hello\x08world"), "helloworld");
+        assert_eq!(xml_escape("a\x0Bb\x0Cc"), "abc");
+        // Tab, newline, carriage return are allowed in XML 1.0
+        assert_eq!(xml_escape("a\tb\nc"), "a\tb\nc");
     }
 
     #[test]
@@ -323,6 +346,14 @@ mod tests {
         let config = test_config();
         let cf = caddyfile(&config);
         assert!(cf.contains("@directPhp"));
+    }
+
+    #[test]
+    fn caddyfile_strips_sensitive_headers() {
+        let config = test_config();
+        let cf = caddyfile(&config);
+        assert!(cf.contains("delete request>headers>Authorization"));
+        assert!(cf.contains("delete request>headers>Cookie"));
     }
 
     #[test]

@@ -39,7 +39,7 @@ pub fn run() -> anyhow::Result<()> {
             Err(_) => continue, // skip invalid configs
         };
 
-        let server_label = format!("com.{}.server", config.project_name);
+        let server_label = format!("com.bunker.{}.server", config.project_name);
         let is_running = Command::new("launchctl")
             .args(["list", &server_label])
             .output()

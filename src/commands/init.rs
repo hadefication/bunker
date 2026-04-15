@@ -124,6 +124,10 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
         suggested
     };
 
+    if port < 1024 {
+        output::warn(&format!("Port {} requires root privileges — FrankenPHP will fail to bind unless run as root.", port));
+    }
+
     // Tunnel name
     let tunnel_name = prompt_or("Tunnel name", args.tunnel, Some(project_name.clone()), args.yes || dry_run)?;
     crate::config::validate_tunnel_name(&tunnel_name)?;

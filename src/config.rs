@@ -80,7 +80,7 @@ pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Validate a file path: must be absolute, no newlines, null bytes, or `..` segments
+/// Validate a file path: must be absolute, no newlines, null bytes, `..` segments, or shell metacharacters
 fn validate_path(label: &str, path: &str) -> anyhow::Result<()> {
     if path.contains('\0') || path.contains('\n') || path.contains('\r') {
         anyhow::bail!("{} contains invalid characters (null bytes or newlines)", label);
@@ -90,6 +90,9 @@ fn validate_path(label: &str, path: &str) -> anyhow::Result<()> {
     }
     if Path::new(path).components().any(|c| c == std::path::Component::ParentDir) {
         anyhow::bail!("{} must not contain '..' segments, got: {}", label, path);
+    }
+    if path.contains(|c: char| matches!(c, '"' | '\'' | '`' | '$' | '\\' | '(' | ')' | ';' | '&' | '|' | '>' | '<')) {
+        anyhow::bail!("{} contains shell metacharacters, got: {}", label, path);
     }
     Ok(())
 }
@@ -140,14 +143,14 @@ impl ProjectConfig {
 
     pub fn service_labels(&self) -> Vec<String> {
         let mut labels = vec![
-            format!("com.{}.server", self.project_name),
-            format!("com.{}.tunnel", self.project_name),
-            format!("com.{}.queue", self.project_name),
+            format!("com.bunker.{}.server", self.project_name),
+            format!("com.bunker.{}.tunnel", self.project_name),
+            format!("com.bunker.{}.queue", self.project_name),
         ];
         if self.scheduler_enabled {
-            labels.push(format!("com.{}.scheduler", self.project_name));
+            labels.push(format!("com.bunker.{}.scheduler", self.project_name));
         }
-        labels.push(format!("com.{}.logrotate", self.project_name));
+        labels.push(format!("com.bunker.{}.logrotate", self.project_name));
         labels
     }
 
@@ -445,6 +448,10 @@ mod tests {
         assert!(validate_path("test", "/path/with\0null").is_err());
         assert!(validate_path("test", "/usr/local/../../../etc/shadow").is_err());
         assert!(validate_path("test", "/usr/bin/..").is_err());
+        assert!(validate_path("test", "/usr/bin/franken\"php").is_err());
+        assert!(validate_path("test", "/usr/bin/php;rm -rf /").is_err());
+        assert!(validate_path("test", "/usr/bin/$HOME").is_err());
+        assert!(validate_path("test", "/usr/bin/`whoami`").is_err());
     }
 
     // --- parse_conf ---
