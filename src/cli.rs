@@ -125,6 +125,9 @@ pub enum Command {
         project: Option<String>,
     },
 
+    /// Update bunker to the latest release
+    SelfUpdate,
+
     /// Generate shell completions
     Completions {
         /// Shell to generate for: bash, zsh, fish

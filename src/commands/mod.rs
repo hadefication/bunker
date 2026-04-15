@@ -4,5 +4,6 @@ pub mod lifecycle;
 pub mod list;
 pub mod logs;
 pub mod run;
+pub mod self_update;
 pub mod teardown;
 pub mod update;

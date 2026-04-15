@@ -48,6 +48,7 @@ fn main() {
         Command::Teardown { project, yes } => commands::teardown::run(project, yes),
         Command::Edit { project } => commands::edit::run(project),
         Command::Update { project } => commands::update::run(project),
+        Command::SelfUpdate => commands::self_update::run(),
         Command::Completions { shell } => {
             let shell = shell
                 .parse::<clap_complete::Shell>()

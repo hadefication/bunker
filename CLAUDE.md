@@ -64,6 +64,7 @@ bunker list
 bunker update [project]          # re-generate configs from bunker.conf
 bunker teardown [project] [--yes]
 bunker edit [project]
+bunker self-update               # check + update to latest release
 bunker completions <shell>       # bash, zsh, fish
 ```
 
