@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::config::{resolve_project, ProjectConfig};
+use crate::config::{ProjectConfig, resolve_project};
 use crate::output;
 
 pub fn run(project: Option<String>, service: Option<String>, follow: bool) -> anyhow::Result<()> {
@@ -22,7 +22,10 @@ pub fn run(project: Option<String>, service: Option<String>, follow: bool) -> an
                 "cloudflared-stdout.log".to_string(),
                 "cloudflared-stderr.log".to_string(),
             ],
-            "queue" => vec!["queue-stdout.log".to_string(), "queue-stderr.log".to_string()],
+            "queue" => vec![
+                "queue-stdout.log".to_string(),
+                "queue-stderr.log".to_string(),
+            ],
             "scheduler" => vec![
                 "scheduler-stdout.log".to_string(),
                 "scheduler-stderr.log".to_string(),
@@ -37,11 +40,7 @@ pub fn run(project: Option<String>, service: Option<String>, follow: bool) -> an
         // All logs
         std::fs::read_dir(&logs_dir)?
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "log")
-            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect()
     };

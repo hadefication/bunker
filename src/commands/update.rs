@@ -1,6 +1,6 @@
 use std::fs;
 
-use crate::config::{launch_agents_dir, resolve_project, ProjectConfig};
+use crate::config::{ProjectConfig, launch_agents_dir, resolve_project};
 use crate::output;
 use crate::templates;
 

@@ -5,7 +5,7 @@ use std::process::Command;
 use dialoguer::Confirm;
 
 use crate::commands::lifecycle;
-use crate::config::{launch_agents_dir, resolve_project, ProjectConfig};
+use crate::config::{ProjectConfig, launch_agents_dir, resolve_project};
 use crate::output;
 
 fn confirm_or(label: &str, default: bool, yes: bool) -> anyhow::Result<bool> {
@@ -45,7 +45,14 @@ pub fn run(project: Option<String>, yes: bool) -> anyhow::Result<()> {
     if is_custom_domain {
         output::info(&format!("Removing DNS route for {}...", config.domain));
         let dns_result = Command::new(&config.cloudflared_path)
-            .args(["tunnel", "route", "dns", "--remove", &config.tunnel_name, &config.domain])
+            .args([
+                "tunnel",
+                "route",
+                "dns",
+                "--remove",
+                &config.tunnel_name,
+                &config.domain,
+            ])
             .output();
 
         match dns_result {

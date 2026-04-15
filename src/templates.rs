@@ -1,8 +1,10 @@
 use crate::config::ProjectConfig;
-use crate::framework::laravel::Laravel;
 use crate::framework::Framework;
+use crate::framework::laravel::Laravel;
 
 pub fn cloudflared_config(config: &ProjectConfig) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let cred_file = format!("{}/.cloudflared/{}.json", home, config.tunnel_uuid);
     format!(
         r#"tunnel: {tunnel_uuid}
 credentials-file: {cred_file}
@@ -13,11 +15,7 @@ ingress:
   - service: http_status:404
 "#,
         tunnel_uuid = config.tunnel_uuid,
-        cred_file = format!(
-            "{}/.cloudflared/{}.json",
-            std::env::var("HOME").unwrap_or_default(),
-            config.tunnel_uuid
-        ),
+        cred_file = cred_file,
         domain = config.domain,
         port = config.port,
     )
@@ -191,7 +189,11 @@ pub fn generate_plists(config: &ProjectConfig) -> Vec<(String, String)> {
             "tunnel".to_string(),
             "--no-autoupdate".to_string(),
             "--config".to_string(),
-            config.project_dir().join("cloudflared.yml").display().to_string(),
+            config
+                .project_dir()
+                .join("cloudflared.yml")
+                .display()
+                .to_string(),
             "run".to_string(),
         ],
         &config.project_path,

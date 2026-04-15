@@ -17,7 +17,10 @@ pub fn validate_project_name(name: &str) -> anyhow::Result<()> {
     if name.starts_with('-') {
         anyhow::bail!("Project name '{}' must not start with a hyphen", name);
     }
-    if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         anyhow::bail!(
             "Invalid project name '{}': only lowercase letters, digits, and hyphens allowed",
             name
@@ -66,7 +69,10 @@ pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
     if domain.ends_with('.') {
         anyhow::bail!("Domain '{}' must not end with a dot", domain);
     }
-    if !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.') {
+    if !domain
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+    {
         anyhow::bail!(
             "Invalid domain '{}': only letters, digits, hyphens, and dots allowed",
             domain
@@ -83,15 +89,21 @@ pub fn validate_domain(domain: &str) -> anyhow::Result<()> {
 /// Validate a file path: must be absolute, no newlines, null bytes, `..` segments, or shell metacharacters
 fn validate_path(label: &str, path: &str) -> anyhow::Result<()> {
     if path.contains('\0') || path.contains('\n') || path.contains('\r') {
-        anyhow::bail!("{} contains invalid characters (null bytes or newlines)", label);
+        anyhow::bail!(
+            "{} contains invalid characters (null bytes or newlines)",
+            label
+        );
     }
     if !Path::new(path).is_absolute() {
         anyhow::bail!("{} must be an absolute path, got: {}", label, path);
     }
-    if Path::new(path).components().any(|c| c == std::path::Component::ParentDir) {
+    if Path::new(path)
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
         anyhow::bail!("{} must not contain '..' segments, got: {}", label, path);
     }
-    if path.contains(|c: char| matches!(c, '"' | '\'' | '`' | '$' | '\\' | '(' | ')' | ';' | '&' | '|' | '>' | '<')) {
+    if path.contains(['"', '\'', '`', '$', '\\', '(', ')', ';', '&', '|', '>', '<']) {
         anyhow::bail!("{} contains shell metacharacters, got: {}", label, path);
     }
     Ok(())

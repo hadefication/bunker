@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command;
 
-use crate::config::{bunker_home, ProjectConfig};
+use crate::config::{ProjectConfig, bunker_home};
 use crate::output;
 
 pub fn run() -> anyhow::Result<()> {
@@ -16,13 +16,10 @@ pub fn run() -> anyhow::Result<()> {
 
     println!();
     println!(
-        "  {:<20} {:<8} {:<10} {}",
-        "\x1b[1mPROJECT\x1b[0m",
-        "\x1b[1mPORT\x1b[0m",
-        "\x1b[1mSTATUS\x1b[0m",
-        "\x1b[1mDOMAIN\x1b[0m"
+        "  {:<20} {:<8} {:<10} \x1b[1mDOMAIN\x1b[0m",
+        "\x1b[1mPROJECT\x1b[0m", "\x1b[1mPORT\x1b[0m", "\x1b[1mSTATUS\x1b[0m"
     );
-    println!("  {:<20} {:<8} {:<10} {}", "-------", "----", "------", "------");
+    println!("  {:<20} {:<8} {:<10} ------", "-------", "----", "------");
 
     let mut entries: Vec<_> = fs::read_dir(&home)?
         .filter_map(|e| e.ok())

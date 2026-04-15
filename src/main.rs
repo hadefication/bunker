@@ -49,9 +49,9 @@ fn main() {
         Command::Edit { project } => commands::edit::run(project),
         Command::Update { project } => commands::update::run(project),
         Command::Completions { shell } => {
-            let shell = shell.parse::<clap_complete::Shell>().map_err(|_| {
-                anyhow::anyhow!("Unknown shell '{}'. Use: bash, zsh, fish", shell)
-            });
+            let shell = shell
+                .parse::<clap_complete::Shell>()
+                .map_err(|_| anyhow::anyhow!("Unknown shell '{}'. Use: bash, zsh, fish", shell));
             match shell {
                 Ok(s) => {
                     clap_complete::generate(

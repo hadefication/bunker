@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::config::{resolve_project, ProjectConfig};
+use crate::config::{ProjectConfig, resolve_project};
 use crate::framework::laravel::Laravel;
 use crate::framework::{Framework, FrameworkKind};
 use crate::output;

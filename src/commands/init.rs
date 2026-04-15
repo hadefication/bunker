@@ -5,7 +5,7 @@ use std::process::Command;
 
 use dialoguer::{Confirm, Input};
 
-use crate::config::{launch_agents_dir, suggest_port, to_kebab, ProjectConfig};
+use crate::config::{ProjectConfig, launch_agents_dir, suggest_port, to_kebab};
 use crate::framework::{self, FrameworkKind};
 use crate::output;
 use crate::templates;
@@ -23,13 +23,19 @@ pub struct InitArgs {
     pub dry_run: bool,
 }
 
-fn prompt_or(label: &str, provided: Option<String>, default: Option<String>, yes: bool) -> anyhow::Result<String> {
+fn prompt_or(
+    label: &str,
+    provided: Option<String>,
+    default: Option<String>,
+    yes: bool,
+) -> anyhow::Result<String> {
     if let Some(val) = provided {
         return Ok(val);
     }
 
     if yes {
-        return default.ok_or_else(|| anyhow::anyhow!("--{} is required in non-interactive mode", label));
+        return default
+            .ok_or_else(|| anyhow::anyhow!("--{} is required in non-interactive mode", label));
     }
 
     if std::io::stdin().is_terminal() {
@@ -87,7 +93,12 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
             .and_then(|n| n.to_str())
             .unwrap_or("project"),
     );
-    let project_name = prompt_or("Project name", args.name, Some(default_name), args.yes || dry_run)?;
+    let project_name = prompt_or(
+        "Project name",
+        args.name,
+        Some(default_name),
+        args.yes || dry_run,
+    )?;
     crate::config::validate_project_name(&project_name)?;
 
     // Detect binaries
@@ -97,14 +108,28 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
         anyhow::bail!("PHP not found. Install via Homebrew or Herd.");
     }
 
-    let detected_frankenphp = which::which("frankenphp").map(|p| p.display().to_string()).ok();
-    let frankenphp_path = prompt_or("FrankenPHP path", args.frankenphp, detected_frankenphp, args.yes || dry_run)?;
+    let detected_frankenphp = which::which("frankenphp")
+        .map(|p| p.display().to_string())
+        .ok();
+    let frankenphp_path = prompt_or(
+        "FrankenPHP path",
+        args.frankenphp,
+        detected_frankenphp,
+        args.yes || dry_run,
+    )?;
     if frankenphp_path.is_empty() {
         anyhow::bail!("FrankenPHP not found. Install it first.");
     }
 
-    let detected_cloudflared = which::which("cloudflared").map(|p| p.display().to_string()).ok();
-    let cloudflared_path = prompt_or("cloudflared path", args.cloudflared, detected_cloudflared, args.yes || dry_run)?;
+    let detected_cloudflared = which::which("cloudflared")
+        .map(|p| p.display().to_string())
+        .ok();
+    let cloudflared_path = prompt_or(
+        "cloudflared path",
+        args.cloudflared,
+        detected_cloudflared,
+        args.yes || dry_run,
+    )?;
     if cloudflared_path.is_empty() {
         anyhow::bail!("cloudflared not found. Install it first.");
     }
@@ -125,7 +150,12 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
     };
 
     // Tunnel name
-    let tunnel_name = prompt_or("Tunnel name", args.tunnel, Some(project_name.clone()), args.yes || dry_run)?;
+    let tunnel_name = prompt_or(
+        "Tunnel name",
+        args.tunnel,
+        Some(project_name.clone()),
+        args.yes || dry_run,
+    )?;
     crate::config::validate_tunnel_name(&tunnel_name)?;
 
     // Scheduler (Laravel-specific)
@@ -140,13 +170,18 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
     // Tunnel + domain
     let (tunnel_uuid, domain) = if dry_run {
         let uuid = "<tunnel-uuid>".to_string();
-        let domain = args.domain.unwrap_or_else(|| format!("{}.cfargotunnel.com", uuid));
+        let domain = args
+            .domain
+            .unwrap_or_else(|| format!("{}.cfargotunnel.com", uuid));
         if !domain.ends_with(".cfargotunnel.com") {
             crate::config::validate_domain(&domain)?;
         }
         (uuid, domain)
     } else {
-        output::info(&format!("Setting up cloudflared tunnel '{}'...", tunnel_name));
+        output::info(&format!(
+            "Setting up cloudflared tunnel '{}'...",
+            tunnel_name
+        ));
         let uuid = get_or_create_tunnel(&cloudflared_path, &tunnel_name)?;
         output::success(&format!("Tunnel ready: {}", uuid));
 
@@ -207,7 +242,11 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
         println!("  --- Plists ({}) ---", plists.len());
         for (filename, _) in &plists {
             println!("  {}", filename);
-            println!("    -> symlink to {}/{}", launch_agents_dir().display(), filename);
+            println!(
+                "    -> symlink to {}/{}",
+                launch_agents_dir().display(),
+                filename
+            );
         }
         println!();
 
@@ -267,19 +306,13 @@ pub fn run(args: InitArgs) -> anyhow::Result<()> {
                         stderr.trim()
                     ));
                     output::warn("Add a CNAME record manually:");
-                    println!(
-                        "  {} -> {}.cfargotunnel.com",
-                        domain, tunnel_uuid
-                    );
+                    println!("  {} -> {}.cfargotunnel.com", domain, tunnel_uuid);
                 }
             }
             Err(e) => {
                 output::warn(&format!("DNS routing failed: {}", e));
                 output::warn("Add a CNAME record manually:");
-                println!(
-                    "  {} -> {}.cfargotunnel.com",
-                    domain, tunnel_uuid
-                );
+                println!("  {} -> {}.cfargotunnel.com", domain, tunnel_uuid);
             }
         }
     }
@@ -305,12 +338,11 @@ fn get_or_create_tunnel(cloudflared: &str, name: &str) -> anyhow::Result<String>
 
     if output.status.success() {
         let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
-        if let Some(arr) = json.as_array() {
-            if let Some(first) = arr.first() {
-                if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
-                    return Ok(id.to_string());
-                }
-            }
+        if let Some(arr) = json.as_array()
+            && let Some(first) = arr.first()
+            && let Some(id) = first.get("id").and_then(|v| v.as_str())
+        {
+            return Ok(id.to_string());
         }
     }
 

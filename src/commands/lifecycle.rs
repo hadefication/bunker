@@ -2,7 +2,7 @@ use std::net::TcpStream;
 use std::process::Command;
 use std::time::Duration;
 
-use crate::config::{launch_agents_dir, resolve_project, ProjectConfig};
+use crate::config::{ProjectConfig, launch_agents_dir, resolve_project};
 use crate::output;
 
 pub fn start(project: Option<String>) -> anyhow::Result<()> {
@@ -20,12 +20,12 @@ pub fn start(project: Option<String>) -> anyhow::Result<()> {
                 .arg(&plist)
                 .output();
 
-            if let Ok(out) = &result {
-                if !out.status.success() {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    let service = label.rsplit('.').next().unwrap_or(&label);
-                    output::warn(&format!("{}: {}", service, stderr.trim()));
-                }
+            if let Ok(out) = &result
+                && !out.status.success()
+            {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let service = label.rsplit('.').next().unwrap_or(&label);
+                output::warn(&format!("{}: {}", service, stderr.trim()));
             }
         }
     }
@@ -46,12 +46,12 @@ pub fn stop(project: Option<String>) -> anyhow::Result<()> {
         if plist.exists() {
             let result = Command::new("launchctl").arg("unload").arg(&plist).output();
 
-            if let Ok(out) = &result {
-                if !out.status.success() {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    let service = label.rsplit('.').next().unwrap_or(&label);
-                    output::warn(&format!("{}: {}", service, stderr.trim()));
-                }
+            if let Ok(out) = &result
+                && !out.status.success()
+            {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let service = label.rsplit('.').next().unwrap_or(&label);
+                output::warn(&format!("{}: {}", service, stderr.trim()));
             }
         }
     }
@@ -73,19 +73,15 @@ pub fn status(project: Option<String>) -> anyhow::Result<()> {
 
     println!();
     println!(
-        "  {:<12} {:<10} {}",
-        "\x1b[1mSERVICE\x1b[0m",
-        "\x1b[1mSTATE\x1b[0m",
-        "\x1b[1mPID\x1b[0m"
+        "  {:<12} {:<10} \x1b[1mPID\x1b[0m",
+        "\x1b[1mSERVICE\x1b[0m", "\x1b[1mSTATE\x1b[0m"
     );
-    println!("  {:<12} {:<10} {}", "-------", "-----", "---");
+    println!("  {:<12} {:<10} ---", "-------", "-----");
 
     for label in config.service_labels() {
         let service_name = label.rsplit('.').next().unwrap_or(&label);
 
-        let output = Command::new("launchctl")
-            .args(["list", &label])
-            .output();
+        let output = Command::new("launchctl").args(["list", &label]).output();
 
         let (state, pid) = match output {
             Ok(out) if out.status.success() => {
@@ -124,12 +120,16 @@ fn extract_pid(launchctl_output: &str) -> Option<u32> {
         let line = line.trim();
         if line.starts_with("\"PID\"") || line.contains("PID") {
             // launchctl list <label> outputs key-value pairs
-            if let Some(val) = line.split('=').nth(1).or_else(|| line.split_whitespace().last()) {
+            if let Some(val) = line
+                .split('=')
+                .nth(1)
+                .or_else(|| line.split_whitespace().last())
+            {
                 let val = val.trim().trim_end_matches(';').trim_matches('"');
-                if let Ok(pid) = val.parse::<u32>() {
-                    if pid > 0 {
-                        return Some(pid);
-                    }
+                if let Ok(pid) = val.parse::<u32>()
+                    && pid > 0
+                {
+                    return Some(pid);
                 }
             }
         }
