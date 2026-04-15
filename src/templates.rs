@@ -83,7 +83,7 @@ pub fn caddyfile(config: &ProjectConfig) -> String {
             roll_keep 5
         }}
         format filter {{
-            wrap console
+            wrap json
             fields {{
                 request>headers>Authorization delete
                 request>headers>Cookie delete
