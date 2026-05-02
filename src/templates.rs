@@ -412,6 +412,17 @@ mod tests {
     }
 
     #[test]
+    fn caddyfile_allows_well_known_paths() {
+        let config = test_config();
+        let cf = caddyfile(&config);
+        // dotfiles blocked separately from sensitive paths
+        assert!(cf.contains("@dotfiles"));
+        assert!(cf.contains("not path /.well-known/*"));
+        // /.* should NOT be in the @blocked matcher
+        assert!(!cf.contains("path /vendor/* /storage/* /.* /artisan"));
+    }
+
+    #[test]
     fn logrotate_plist_has_calendar_interval() {
         let config = test_config();
         let plists = generate_plists(&config);
