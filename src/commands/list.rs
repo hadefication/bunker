@@ -1,8 +1,8 @@
 use std::fs;
-use std::process::Command;
 
 use colored::Colorize;
 
+use crate::commands::lifecycle::{LaunchAgentState, service_state};
 use crate::config::{ProjectConfig, bunker_home};
 use crate::output;
 
@@ -42,15 +42,11 @@ pub fn run() -> anyhow::Result<()> {
         };
 
         let server_label = format!("com.bunker.{}.server", config.project_name);
-        let is_running = Command::new("launchctl")
-            .args(["list", &server_label])
-            .output()
-            .is_ok_and(|o| o.status.success());
 
-        let status = if is_running {
-            format!("{:<10}", "running").green()
-        } else {
-            format!("{:<10}", "stopped").red()
+        let status = match service_state(&server_label) {
+            LaunchAgentState::Running(_) => format!("{:<10}", "running").green(),
+            LaunchAgentState::Stopped => format!("{:<10}", "stopped").red(),
+            LaunchAgentState::Unloaded => format!("{:<10}", "stopped").red(),
         };
 
         println!(

@@ -1,9 +1,6 @@
-use std::net::TcpStream;
-use std::process::Command;
-use std::time::Duration;
-
 use colored::Colorize;
 
+use crate::commands::lifecycle::{LaunchAgentState, is_port_reachable, service_state};
 use crate::config::{ProjectConfig, resolve_project};
 
 pub fn run(project: Option<String>, verbose: bool) -> anyhow::Result<()> {
@@ -11,25 +8,19 @@ pub fn run(project: Option<String>, verbose: bool) -> anyhow::Result<()> {
     let config = ProjectConfig::load(&name)?;
 
     let server_label = format!("com.bunker.{}.server", config.project_name);
-    let is_running = Command::new("launchctl")
-        .args(["list", &server_label])
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let state = service_state(&server_label);
+    let is_loaded = matches!(
+        state,
+        LaunchAgentState::Running(_) | LaunchAgentState::Stopped
+    );
+    let healthy = is_loaded && is_port_reachable(config.port);
 
-    let healthy = is_running
-        && TcpStream::connect_timeout(
-            &format!("127.0.0.1:{}", config.port).parse().unwrap(),
-            Duration::from_secs(2),
-        )
-        .is_ok();
-
-    let status = if is_running {
-        "running".green()
-    } else {
-        "stopped".red()
+    let status = match state {
+        LaunchAgentState::Running(_) => "running".green(),
+        LaunchAgentState::Stopped | LaunchAgentState::Unloaded => "stopped".red(),
     };
 
-    let health = if !is_running {
+    let health = if !is_loaded {
         "—".dimmed()
     } else if healthy {
         "reachable".green()
