@@ -17,7 +17,8 @@ cloudflared. bunker itself runs no daemon except `bunker proxy serve`, which lau
 plus hyper-util, tar, sha2, security-framework (Keychain), rpassword, zeroize, libc, time,
 assert_cmd and tempfile (dev only). On the mini: Lima 2.3.0, `/usr/bin/sandbox-exec`, cloudflared
 2026.9.3, `/usr/bin/openssl`, `/usr/bin/curl`. In the guest: Ubuntu 24.04 arm64, nginx, php-fpm
-from the ondrej PPA, MySQL 8.4 from repo.mysql.com, Node 22 from NodeSource, Composer.
+from the ondrej PPA, MySQL 8.4 (Percona Server from repo.percona.com: Oracle's repo has no arm64
+noble packages, Task 11 ruling), Node 22 from NodeSource, Composer.
 
 **Spec:** `docs/superpowers/specs/2026-11-16-bunker-design.md`. The containment results section
 (and its "Findings plan 2 must carry") is binding here.
@@ -340,11 +341,11 @@ Expected: all pass; `cargo deny check` prints `advisories ok, bans ok, licenses 
     IPv6 ULA `fc00::/7`, link-local `fe80::/10`, IPv4-mapped and IPv4-compatible forms of any of
     those, NAT64 `64:ff9b::/96` embedding an internal IPv4, and any address in `own`.
   - `const BUILTIN_BUILD: &[&str]`: `ports.ubuntu.com`, `ppa.launchpadcontent.net`,
-    `keyserver.ubuntu.com`, `repo.mysql.com`, `deb.nodesource.com`, `getcomposer.org`,
+    `keyserver.ubuntu.com`, `repo.percona.com`, `deb.nodesource.com`, `getcomposer.org`,
     `repo.packagist.org`, `packagist.org`, `github.com`, `api.github.com`, `codeload.github.com`,
     `objects.githubusercontent.com`, `registry.npmjs.org`.
     `const MAINTENANCE: &[&str]`: `ports.ubuntu.com`, `ppa.launchpadcontent.net`,
-    `repo.mysql.com`, `deb.nodesource.com`. Task 11's first confined provision may add to these;
+    `repo.percona.com`, `deb.nodesource.com`. Task 11's first confined provision may add to these;
     each addition is a ledgered ruling with the blocked host shown in `network.jsonl`.
   - `struct Phases { build: bool, maintenance: bool }`;
     `struct Policy { allow, build, deny: Vec<Pattern> }` built from `Network`;
@@ -744,7 +745,7 @@ work, as long as Lima still runs under it.
        accept, then output drop to internal ranges. This is defense in depth only.
     5. Users `app` and `deploy` (no sudo); `/srv/app/{releases,shared/storage/{app,framework/{cache,sessions,views},logs}}`
        with the spec's ownership.
-    6. The ondrej PPA, MySQL 8.4 (`repo.mysql.com`, `mysql-8.4-lts`) and NodeSource `node_22.x`
+    6. The ondrej PPA, MySQL 8.4 (Percona `ps-84-lts` and `telemetry` on `repo.percona.com`) and NodeSource `node_22.x`
        repos, each with a `signed-by` keyring. The key is fetched, then its fingerprint is checked
        against a constant pinned from the vendor's published fingerprint, with the source URL in a
        comment. A fingerprint mismatch aborts.

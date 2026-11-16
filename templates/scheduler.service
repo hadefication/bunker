@@ -1,0 +1,12 @@
+# Written by bunker up; changes here are overwritten.
+[Unit]
+Description=bunker Laravel scheduler
+After=network.target mysql.service
+ConditionPathExists=/srv/app/current/artisan
+
+[Service]
+Type=oneshot
+User=app
+Group=app
+WorkingDirectory=/srv/app/current
+ExecStart=/usr/bin/php artisan schedule:run

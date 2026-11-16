@@ -136,7 +136,7 @@ pub struct SecretMeta {
     pub host: Option<String>,
 }
 
-/// MySQL tracks bunker can provision (the mysql-8.4-lts apt repository).
+/// MySQL tracks bunker can provision: 8.4 is Percona Server 8.4 LTS (Oracle ships no arm64 noble packages).
 pub const SUPPORTED_MYSQL: [&str; 1] = ["8.4"];
 
 fn config_invalid(msg: impl Into<String>) -> BunkerError {

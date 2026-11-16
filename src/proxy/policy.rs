@@ -7,7 +7,7 @@ pub const BUILTIN_BUILD: &[&str] = &[
     "ports.ubuntu.com",
     "ppa.launchpadcontent.net",
     "keyserver.ubuntu.com",
-    "repo.mysql.com",
+    "repo.percona.com",
     "deb.nodesource.com",
     "getcomposer.org",
     "repo.packagist.org",
@@ -22,7 +22,7 @@ pub const BUILTIN_BUILD: &[&str] = &[
 pub const MAINTENANCE: &[&str] = &[
     "ports.ubuntu.com",
     "ppa.launchpadcontent.net",
-    "repo.mysql.com",
+    "repo.percona.com",
     "deb.nodesource.com",
 ];
 
@@ -280,9 +280,9 @@ mod tests {
     #[test]
     fn maintenance_list_needs_maintenance_phase() {
         let p = policy(&[], &[], &[]);
-        assert_eq!(verdict(&p, "repo.mysql.com", 80, RUN), Verdict::Block);
+        assert_eq!(verdict(&p, "repo.percona.com", 80, RUN), Verdict::Block);
         assert_eq!(
-            p.decide("repo.mysql.com", 80, MAINT).reason,
+            p.decide("repo.percona.com", 80, MAINT).reason,
             Reason::Listed(Source::Maintenance)
         );
         assert_eq!(

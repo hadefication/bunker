@@ -218,7 +218,8 @@ The exact keys are the builder's to refine. These requirements are fixed:
 - Ubuntu 24.04 LTS cloud image.
 - **Security updates in a nightly maintenance window** (designer's call, settled after review):
   - The host's nightly job, which also runs the backup, opens the OS update hosts on the proxy.
-    These are the Ubuntu security and updates mirrors, the ondrej PPA and the MySQL repo.
+    These are the Ubuntu security and updates mirrors, the ondrej PPA, the Percona repo (MySQL)
+    and NodeSource.
   - It then runs `unattended-upgrade` in the guest through `limactl shell` and closes the update
     hosts again.
   - If the guest reports `/var/run/reboot-required`, the VM restarts inside the window. That's a few
@@ -227,8 +228,11 @@ The exact keys are the builder's to refine. These requirements are fixed:
   - Outside the window, the update hosts are closed like everything else.
 - nginx in front of php-fpm (ondrej PPA, version from config). nginx was chosen over FrankenPHP
   because it supports PHP 7.x and can front non-PHP stacks later.
-- MySQL from the config. Bunker generates the database password at provision time, writes it into the
-  VM's `.env`, and never shows it.
+- MySQL from the config. Oracle's apt repo has no arm64 packages for Ubuntu 24.04 and Ubuntu ships only
+  8.0, so `mysql = "8.4"` installs Percona Server for MySQL 8.4 LTS, a drop-in MySQL 8.4, from
+  `repo.percona.com` (maintainer's choice, plan 2 Task 11). Its telemetry agent is a hard package
+  dependency; bunker masks it before install and disables the server's telemetry. Bunker generates
+  the database password at provision time, writes it into the VM's `.env`, and never shows it.
 - systemd units for nginx, php-fpm, MySQL, each worker and the scheduler (when enabled), with
   logrotate. Everything is enabled to start on boot.
 - Layout:

@@ -111,6 +111,13 @@ pub(crate) mod testing {
         let cfg = crate::config::fixture_config()
             .replace("/Users/inggo/Code/life-os", &h.home.to_string_lossy());
         std::fs::write(pd.config(), cfg).unwrap();
+        // The repo the fixture points at: Laravel-shaped, so detect() accepts it.
+        std::fs::write(h.home.join("artisan"), "").unwrap();
+        std::fs::write(
+            h.home.join("composer.json"),
+            r#"{"require":{"php":"^8.3","laravel/framework":"^12.0"}}"#,
+        )
+        .unwrap();
         pd
     }
 }

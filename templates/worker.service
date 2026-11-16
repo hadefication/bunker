@@ -1,0 +1,16 @@
+# Written by bunker up; changes here are overwritten.
+[Unit]
+Description=bunker worker {{name}}
+After=network.target mysql.service
+ConditionPathExists=/srv/app/current/artisan
+
+[Service]
+User=app
+Group=app
+WorkingDirectory=/srv/app/current
+ExecStart=/bin/sh -c "{{cmd}}"
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,8 @@
-//! `bunker up <project>`: create and start the confined VM (phase A: VM, proxy, forwards).
+//! `bunker up <project>`: create and start the confined VM (phase A: VM, proxy, forwards), then
+//! provision it (phase B: packages, users, nginx, php-fpm, MySQL, units).
 use crate::config::Config;
 use crate::error::Result;
+use crate::guest::provision::provision;
 use crate::host::Host;
 use crate::launchd::{Agent, Role, ensure_in, kickstart, label};
 use crate::lima::confine::Confinement;
@@ -13,6 +15,7 @@ use crate::lima::vm::{
 use crate::output::Report;
 use crate::paths::{ProjectDir, ensure_private_dir, write_private};
 use crate::run::Cmd;
+use crate::secrets::store::SecretStore;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -23,6 +26,7 @@ pub struct UpReport {
     pub project: String,
     pub vm: String,
     pub created: bool,
+    pub provisioned: bool,
     pub confinement: String,
     pub warnings: Vec<String>,
 }
@@ -36,8 +40,15 @@ impl Report for UpReport {
         };
         writeln!(
             w,
-            "{}: {} {verb} ({})",
-            self.project, self.vm, self.confinement
+            "{}: {} {verb} ({}{})",
+            self.project,
+            self.vm,
+            self.confinement,
+            if self.provisioned {
+                ", provisioned"
+            } else {
+                ""
+            }
         )?;
         for x in &self.warnings {
             writeln!(w, "  warning: {x}")?;
@@ -45,7 +56,7 @@ impl Report for UpReport {
         Ok(())
     }
     fn json(&self) -> Value {
-        json!({"project": self.project, "vm": self.vm, "created": self.created, "confinement": self.confinement, "warnings": self.warnings})
+        json!({"project": self.project, "vm": self.vm, "created": self.created, "provisioned": self.provisioned, "confinement": self.confinement, "warnings": self.warnings})
     }
     fn exit(&self) -> crate::output::ExitCode {
         if self.confinement == "unconfined" {
@@ -66,7 +77,8 @@ else
 fi
 "#;
 
-pub fn up(h: &Host, project: &str) -> Result<UpReport> {
+/// Phase A (VM, proxy, forwards), then phase B (provisioning) once the VM is confirmed confined.
+pub fn up(h: &Host, store: &dyn SecretStore, project: &str) -> Result<UpReport> {
     let pd = ProjectDir::under(&h.home, project);
     let cfg = Config::load(&pd)?;
     limactl_version(h)?;
@@ -139,13 +151,25 @@ pub fn up(h: &Host, project: &str) -> Result<UpReport> {
     h.r.run_ok(&shell(h, &vm).args(["sudo", "sh", "-s"]).stdin(HOSTS_SCRIPT))?;
 
     let confinement = h.probe.confinement(project)?;
-    if let Confinement::Unconfined { reason, .. } = &confinement {
-        warnings.push(reason.clone());
-    }
+    let provisioned = match &confinement {
+        Confinement::Confined { .. } => {
+            provision(h, store, &pd, &cfg)?;
+            true
+        }
+        Confinement::Unconfined { reason, .. } => {
+            warnings.push(format!("{reason}; not provisioning an unconfined VM"));
+            false
+        }
+        Confinement::Stopped => {
+            warnings.push("the VM stopped before provisioning".into());
+            false
+        }
+    };
     Ok(UpReport {
         project: project.to_string(),
         vm,
         created,
+        provisioned,
         confinement: confinement.as_str().to_string(),
         warnings,
     })
@@ -190,6 +214,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::host::testing::{CONFINED, host, project};
     use crate::run::{Cmd, Output, RecordingRunner};
+    use crate::secrets::store::MemoryStore;
 
     pub const EMPTY_SHA: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -234,7 +259,7 @@ pub(crate) mod tests {
         let r = scripted("2.2.0", false);
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        let e = up(&h, "t").unwrap_err();
+        let e = up(&h, &MemoryStore::default(), "t").unwrap_err();
         assert_eq!(
             (e.code, e.exit),
             ("lima_too_old", crate::output::ExitCode::Failure)
@@ -248,7 +273,7 @@ pub(crate) mod tests {
         let r = scripted("2.3.0", false);
         let h = host(&r, &CONFINED, d.path());
         let pd = project(&h, "t");
-        let rep = up(&h, "t").unwrap();
+        let rep = up(&h, &MemoryStore::default(), "t").unwrap();
         assert_eq!((rep.created, rep.confinement.as_str()), (true, "confined"));
         let calls = r.calls();
         let create = calls
@@ -300,7 +325,7 @@ pub(crate) mod tests {
         let r = scripted("2.3.0", true);
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        assert!(!up(&h, "t").unwrap().created);
+        assert!(!up(&h, &MemoryStore::default(), "t").unwrap().created);
         assert!(!r.calls().iter().any(
             |c| c.program == "limactl" && c.args.first().map(String::as_str) == Some("create")
         ));
@@ -312,7 +337,7 @@ pub(crate) mod tests {
         let r = scripted("2.3.0", false);
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        up(&h, "t").unwrap();
+        up(&h, &MemoryStore::default(), "t").unwrap();
         assert!(
             !r.calls()
                 .iter()
@@ -351,7 +376,10 @@ pub(crate) mod tests {
         }
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        assert_eq!(up(&h, "t").unwrap_err().code, "vm_start_timeout");
+        assert_eq!(
+            up(&h, &MemoryStore::default(), "t").unwrap_err().code,
+            "vm_start_timeout"
+        );
     }
 }
 
@@ -360,6 +388,8 @@ mod symlink_tests {
     use super::tests::scripted;
     use super::*;
     use crate::host::testing::{CONFINED, host, project};
+    use crate::run::RecordingRunner;
+    use crate::secrets::store::MemoryStore;
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -374,7 +404,7 @@ mod symlink_tests {
         let vm_dir = h.lima_home.join("bunker-t");
         std::fs::create_dir_all(&vm_dir).unwrap();
         std::os::unix::fs::symlink(&victim, vm_dir.join("tmp")).unwrap();
-        up(&h, "t").unwrap();
+        up(&h, &MemoryStore::default(), "t").unwrap();
         assert_eq!(
             std::fs::metadata(&victim).unwrap().permissions().mode() & 0o777,
             0o755
@@ -395,10 +425,60 @@ mod symlink_tests {
         let vm_dir = h.lima_home.join("bunker-t");
         std::fs::create_dir_all(&vm_dir).unwrap();
         std::fs::write(vm_dir.join("lima.yaml"), "mounts: [{location: \"~\"}]\n").unwrap();
-        assert_eq!(up(&h, "t").unwrap_err().code, "instance_tampered");
+        assert_eq!(
+            up(&h, &MemoryStore::default(), "t").unwrap_err().code,
+            "instance_tampered"
+        );
         assert!(
             crate::lima::vm::check_sealed(&vm_dir).is_err(),
             "never blessed"
         );
+    }
+
+    fn provisioned(r: &RecordingRunner) -> bool {
+        r.calls().iter().any(|c| {
+            c.program == "limactl"
+                && c.args
+                    .ends_with(&["sudo".into(), "bash".into(), "-s".into()])
+        })
+    }
+
+    #[test]
+    fn up_provisions_a_confined_vm() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        let rep = up(&h, &MemoryStore::default(), "t").unwrap();
+        assert!(rep.provisioned && provisioned(&r));
+        // The probe ran before the provision call, not after.
+        let calls = r.calls();
+        let hosts = calls
+            .iter()
+            .position(|c| c.args.ends_with(&["sudo".into(), "sh".into(), "-s".into()]))
+            .unwrap();
+        let prov = calls
+            .iter()
+            .position(|c| {
+                c.args
+                    .ends_with(&["sudo".into(), "bash".into(), "-s".into()])
+            })
+            .unwrap();
+        assert!(hosts < prov);
+    }
+
+    #[test]
+    fn up_never_provisions_an_unconfined_vm() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let probe = crate::host::testing::FakeProbe(Confinement::Unconfined {
+            hostagent: 1,
+            reason: "not sandboxed".into(),
+        });
+        let h = host(&r, &probe, d.path());
+        project(&h, "t");
+        let rep = up(&h, &MemoryStore::default(), "t").unwrap();
+        assert_eq!(rep.exit(), crate::output::ExitCode::Unconfined);
+        assert!(!rep.provisioned && !provisioned(&r));
     }
 }

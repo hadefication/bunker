@@ -1,0 +1,11 @@
+# Written by bunker up; changes here are overwritten.
+/srv/app/shared/storage/logs/*.log {
+    su app app
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

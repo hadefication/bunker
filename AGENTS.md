@@ -24,6 +24,10 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
 - `src/host.rs`: `Host`, everything a command needs from the machine (runner, confinement probe,
   paths, limactl, poll timing). Tests build one with `host::testing::host`.
 - `src/lima/vm.rs`: limactl version, instances, the vm and forward agents, readiness wait.
+- `src/guest/`: `render` builds the provisioning script and the files it installs from
+  `templates/` (nginx site, php-fpm pool, worker and scheduler units, nftables, logrotate);
+  `provision` runs it as root in the guest inside a Build lease, the DB password on stdin.
+  Repo signing keys and Composer are pinned by fingerprint and sha256 in the script.
   `src/lima/confine.rs`: `ConfinementProbe`; `SystemProbe` reads `ha.pid` and asks
   `sandbox_check` whether that process is sandboxed.
 - `src/secrets/`: `SecretStore` (`KeychainStore`, `MemoryStore` for tests), `generate_missing`

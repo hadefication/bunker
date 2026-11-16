@@ -43,7 +43,10 @@ fn main() {
                 force,
             }),
         ),
-        Command::Up { project } => with_host(format, |h| commands::up::up(h, &project)),
+        Command::Up { project } => {
+            let store = bunker::secrets::keychain::KeychainStore::from_env();
+            with_host(format, |h| commands::up::up(h, &store, &project))
+        }
         Command::Start { project } => {
             with_host(format, |h| commands::lifecycle::start(h, &project))
         }

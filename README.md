@@ -18,7 +18,7 @@ Every command prints readable output by default. For agents and scripts, add `--
 | Command | What it does |
 | --- | --- |
 | `bunker init <project> --path <repo> [--domain D] [--tunnel T] [--php V] [--force]` | Detect the Laravel app (PHP from composer.json's constraint, extensions, Node, Passport), pick free ports and write a commented `~/.bunker/<project>/bunker.toml` (mode 0600). The tunnel defaults to the project name when `--domain` is given |
-| `bunker up <project>` | Create (first time) and start the project's confined VM: downloads and verifies the Ubuntu image, writes the Lima template and Seatbelt profiles, starts the proxy, the VM and both SSH forwards as LaunchAgents, and reports whether the VM is confined. Safe to re-run |
+| `bunker up <project>` | Create (first time) and start the project's confined VM: downloads and verifies the Ubuntu image, writes the Lima template and Seatbelt profiles, starts the proxy, the VM and both SSH forwards as LaunchAgents, and checks the VM is confined. Then, only if it is, provisions it: PHP and nginx (ondrej PPA), MySQL 8.4 (Percona Server, since Oracle has no arm64 packages), Node when configured, Composer, the `app` and `deploy` users, workers and the scheduler, with the build hosts open for 45 minutes at most. Generates the database password and app key into the Keychain. Output goes to `~/.bunker/<project>/logs/provision.log`. Safe to re-run |
 | `bunker start <project>` | Start a stopped VM and its forwards |
 | `bunker stop <project>` | Stop the forwards and the VM. Nothing comes back at login until `start` or `up` |
 | `bunker restart <project>` | Stop, then start |
