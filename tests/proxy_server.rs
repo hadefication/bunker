@@ -261,7 +261,7 @@ async fn absolute_uri_http_is_forwarded_without_proxy_headers() {
     .await;
     let (status, body, _) = request(
         h.addrs[0],
-        "GET http://example.com/p HTTP/1.1\r\nHost: example.com\r\nProxy-Authorization: Basic eDp5\r\nProxy-Connection: keep-alive\r\n\r\n",
+        "GET http://example.com/p HTTP/1.1\r\nHost: other-site.test\r\nProxy-Authorization: Basic eDp5\r\nProxy-Connection: keep-alive\r\n\r\n",
     )
     .await;
     assert_eq!((status, body.as_str()), (200, "hello"));

@@ -348,15 +348,18 @@ async fn forward(
         Err(_) => return bad_gateway(),
     };
     strip_hop_by_hop(&mut parts.headers);
-    if !parts.headers.contains_key(HOST) {
-        let value = if port == 80 {
-            host.to_string()
-        } else {
-            format!("{host}:{port}")
-        };
-        if let Ok(v) = HeaderValue::from_str(&value) {
+    // Always the checked target: a client-sent Host could name another site behind the same IP
+    // (a CDN), which would bypass the allowlist.
+    let value = if port == 80 {
+        host.to_string()
+    } else {
+        format!("{host}:{port}")
+    };
+    match HeaderValue::from_str(&value) {
+        Ok(v) => {
             parts.headers.insert(HOST, v);
         }
+        Err(_) => return bad_gateway(),
     }
     match sender.send_request(Request::from_parts(parts, body)).await {
         Ok(resp) => {

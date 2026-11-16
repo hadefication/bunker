@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::net::IpAddr;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// `(project, proxy port)` for every project directory with a readable `[ports].proxy`. An invalid
 /// config still gets its listener, so the guest reaches a proxy that fails closed.
@@ -97,16 +97,9 @@ pub fn serve() -> Result<ServeReport> {
         .build()
         .map_err(|e| BunkerError::io("cannot start the async runtime", e))?;
     let result = rt.block_on(async {
-        let own = Arc::new(RwLock::new(own_addresses()));
-        let refresher = own.clone();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-            loop {
-                tick.tick().await;
-                *refresher.write().unwrap() = own_addresses();
-            }
-        });
-        let own_fn: Arc<dyn Fn() -> Vec<IpAddr> + Send + Sync> = Arc::new(move || own.read().unwrap().clone());
+        // Read on every request: getifaddrs is cheap, and a cached list goes stale the moment an
+        // interface comes up.
+        let own_fn: Arc<dyn Fn() -> Vec<IpAddr> + Send + Sync> = Arc::new(own_addresses);
         let shutdown = async {
             let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
             tokio::select! {
