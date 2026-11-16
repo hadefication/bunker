@@ -118,6 +118,9 @@ pub enum Command {
         #[command(subcommand)]
         cmd: NetCommand,
     },
+    /// Start cloudflared for a confined VM (run by launchd as com.bunker.<project>.tunnel).
+    #[command(hide = true, name = "tunnel-run")]
+    TunnelRun { project: String },
     /// Run the egress proxy (started by launchd as com.bunker.proxy).
     #[command(hide = true)]
     Proxy {

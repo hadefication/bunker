@@ -78,6 +78,18 @@ fn main() {
                 commands::deploy::deploy(h, &store, &project, opts, &progress)
             })
         }
+        Command::TunnelRun { project } => std::process::exit(with_host_code(format, |h| {
+            let cmd = commands::up::tunnel_gate(h, &project)?;
+            use std::os::unix::process::CommandExt;
+            // exec only returns on failure; launchd then retries after the agent's throttle.
+            let err = std::process::Command::new(&cmd.program)
+                .args(&cmd.args)
+                .exec();
+            Err(bunker::error::BunkerError::io(
+                format!("cannot start {}", cmd.program),
+                err,
+            ))
+        })),
         Command::Status { project } => {
             with_host(format, |h| commands::status::status(h, project.as_deref()))
         }

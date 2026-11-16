@@ -103,6 +103,16 @@ pub fn serve() -> Result<ServeReport> {
             BunkerError::new("own_addresses", ExitCode::Failure, "cannot list this Mac's addresses (getifaddrs failed)")
         })?);
         let own_fn: Arc<dyn Fn() -> Vec<IpAddr> + Send + Sync> = Arc::new(move || own.get());
+        // Housekeeping: rotate network.jsonl and the host logs every 10 minutes.
+        let rotate_home = home.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+            loop {
+                tick.tick().await;
+                let h = rotate_home.clone();
+                let _ = tokio::task::spawn_blocking(move || crate::logs::rotate::rotate_all(&h)).await;
+            }
+        });
         let shutdown = async {
             let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
             tokio::select! {

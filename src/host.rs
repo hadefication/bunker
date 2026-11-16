@@ -46,8 +46,10 @@ impl<'a> Host<'a> {
             agents_dir: crate::launchd::agents_dir(),
             lima_home: lima_home(),
             limactl,
-            bunker_exe: std::env::current_exe()
-                .map_err(|e| BunkerError::io("cannot find the bunker binary", e))?,
+            bunker_exe: installed_exe(
+                &std::env::current_exe()
+                    .map_err(|e| BunkerError::io("cannot find the bunker binary", e))?,
+            ),
             cloudflared: find_in_path("cloudflared").unwrap_or_else(|| "cloudflared".into()),
             cloudflared_cert: crate::secrets::keychain::user_home()
                 .map(|h| h.join(".cloudflared/cert.pem"))
@@ -60,6 +62,12 @@ impl<'a> Host<'a> {
     pub fn limactl(&self) -> String {
         self.limactl.to_string_lossy().into_owned()
     }
+}
+
+/// The binary's real path (a Homebrew or cargo-install symlink resolved), for agents launchd
+/// starts long after this process is gone.
+pub fn installed_exe(p: &std::path::Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
 pub fn lima_home() -> PathBuf {

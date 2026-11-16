@@ -526,6 +526,16 @@ contains values.
 
 - LaunchAgents start the proxy, then the confined VMs, cloudflared, the tailcat server and the
   backup schedule, all with `RunAtLoad` and `KeepAlive`.
+- launchd has no ordering, so each piece retries until what it needs is up: the forwards exit on a
+  failed forward (`ExitOnForwardFailure`) and launchd restarts them after `ThrottleInterval`. The
+  tunnel agent runs `bunker tunnel-run <project>`, which starts cloudflared only once the confinement
+  probe says the VM is confined; until then it exits and launchd retries, so after a reboot the
+  domain reaches the Mac only when the VM is back and confined (plan 2, Task 15).
+- The agents run the installed binary by its real path. `up` warns when that path is a build
+  artifact under `target/`.
+- The proxy rotates `network.jsonl` and every host log under `~/.bunker` at 10 MiB, keeping five
+  copies (copy, then truncate in place, so launchd's open stdout keeps working). Guest logs rotate
+  with logrotate.
 - Like old bunker, this needs the maintainer logged in after the Mac reboots. A LaunchDaemon variant
   comes with fallback B.
 

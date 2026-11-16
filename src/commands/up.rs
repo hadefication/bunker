@@ -163,6 +163,12 @@ pub fn up(
     ensure_in(h.r, &h.agents_dir, &fwd_web)?;
     h.r.run_ok(&shell(h, &vm).args(["sudo", "sh", "-s"]).stdin(HOSTS_SCRIPT))?;
 
+    if h.bunker_exe.components().any(|c| c.as_os_str() == "target") {
+        warnings.push(format!(
+            "the proxy and tunnel agents run {}, a build artifact under target/; install bunker so a rebuild or cargo clean can't break them",
+            h.bunker_exe.display()
+        ));
+    }
     let confinement = h.probe.confinement(project)?;
     let mut tunnel = None;
     let provisioned = match &confinement {
@@ -273,20 +279,42 @@ pub fn sync_tunnel(h: &Host, pd: &ProjectDir, cfg: &Config, c: &Confinement) -> 
     }
 }
 
+/// What the tunnel agent runs (`bunker tunnel-run <project>`): cloudflared, but only once the VM
+/// is confined. At login launchd starts every agent at once with no check of its own, so the
+/// domain would otherwise reach the Mac before anyone knows the VM came back confined. Refused,
+/// the agent exits and launchd retries after its throttle.
+pub fn tunnel_gate(h: &Host, project: &str) -> Result<Cmd> {
+    let pd = ProjectDir::under(&h.home, project);
+    match h.probe.confinement(project)? {
+        Confinement::Confined { .. } => Ok(Cmd::new(h.cloudflared.to_string_lossy())
+            .args(["tunnel", "--no-autoupdate", "--config"])
+            .arg(pd.cloudflared_yml().to_string_lossy())
+            .arg("run")),
+        other => Err(BunkerError::new(
+            "tunnel_held",
+            ExitCode::Refused,
+            format!(
+                "not starting {project}'s tunnel: its VM is {}",
+                other.as_str()
+            ),
+        )),
+    }
+}
+
 /// `com.bunker.<project>.tunnel`: cloudflared with bunker's config, restarted if it exits.
 pub fn tunnel_agent(h: &Host, pd: &ProjectDir) -> Agent {
     let logs = pd.logs_dir();
     Agent {
         label: label(Some(&pd.name), Role::Tunnel),
         program_args: vec![
-            h.cloudflared.to_string_lossy().into_owned(),
-            "tunnel".into(),
-            "--no-autoupdate".into(),
-            "--config".into(),
-            pd.cloudflared_yml().to_string_lossy().into_owned(),
-            "run".into(),
+            h.bunker_exe.to_string_lossy().into_owned(),
+            "tunnel-run".into(),
+            pd.name.clone(),
         ],
-        env: BTreeMap::new(),
+        env: BTreeMap::from([(
+            "BUNKER_HOME".to_string(),
+            h.home.to_string_lossy().into_owned(),
+        )]),
         keep_alive: true,
         run_at_load: true,
         throttle_secs: Some(5),
@@ -676,11 +704,7 @@ mod symlink_tests {
         assert!(yml.contains("tunnel: 6ff4") && yml.contains("hostname: life-os.bangkila.com"));
         let plist =
             std::fs::read_to_string(h.agents_dir.join("com.bunker.t.tunnel.plist")).unwrap();
-        for a in [
-            "<string>tunnel</string>",
-            "<string>--no-autoupdate</string>",
-            "<string>run</string>",
-        ] {
+        for a in ["<string>tunnel-run</string>", "<string>t</string>"] {
             assert!(plist.contains(a), "{a} missing from\n{plist}");
         }
     }
@@ -768,5 +792,129 @@ mod symlink_tests {
         let rep = up(&h, &MemoryStore::default(), "t", false).unwrap();
         assert!(rep.tunnel.is_none());
         assert!(!h.agents_dir.join("com.bunker.t.tunnel.plist").exists());
+    }
+
+    #[test]
+    fn every_agent_runs_at_load() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let h = host(&r, &CONFINED, d.path());
+        let pd = crate::host::testing::project(&h, "t");
+        let cfg = Config::load(&pd).unwrap();
+        let mut agents: Vec<Agent> = crate::lima::vm::agents_for(
+            "t",
+            &cfg,
+            &pd,
+            &h.limactl,
+            std::path::Path::new("/x/bunker-t"),
+        )
+        .to_vec();
+        agents.push(proxy_agent(&h));
+        agents.push(tunnel_agent(&h, &pd));
+        for a in agents {
+            assert!(
+                a.run_at_load && a.keep_alive && a.throttle_secs.is_some(),
+                "{}",
+                a.label
+            );
+            assert!(
+                a.stdout.starts_with(h.home.join("logs")) || a.stdout.starts_with(pd.logs_dir()),
+                "{}",
+                a.label
+            );
+        }
+    }
+
+    #[test]
+    fn proxy_agent_points_at_installed_binary() {
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("Cellar/bunker/2.0.0/bin/bunker");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "").unwrap();
+        let link = d.path().join("bin-bunker");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(
+            crate::host::installed_exe(&link),
+            real.canonicalize().unwrap()
+        );
+        let r = RecordingRunner::new();
+        let h = host(&r, &CONFINED, d.path());
+        assert_eq!(
+            proxy_agent(&h).program_args[..3],
+            ["/usr/local/bin/bunker", "proxy", "serve"]
+        );
+    }
+
+    #[test]
+    fn up_warns_when_binary_is_a_build_artifact() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let mut h = host(&r, &CONFINED, d.path());
+        h.bunker_exe = "/x/repo/target/release/bunker".into();
+        project(&h, "t");
+        let rep = up(&h, &MemoryStore::default(), "t", false).unwrap();
+        assert!(
+            rep.warnings
+                .iter()
+                .any(|w| w.contains("target/") && w.contains("/x/repo/target/release/bunker")),
+            "{:?}",
+            rep.warnings
+        );
+        let d2 = tempfile::tempdir().unwrap();
+        let r2 = scripted("2.3.0", false);
+        let h2 = host(&r2, &CONFINED, d2.path());
+        project(&h2, "t");
+        let rep = up(&h2, &MemoryStore::default(), "t", false).unwrap();
+        assert!(!rep.warnings.iter().any(|w| w.contains("target/")));
+    }
+
+    #[test]
+    fn tunnel_agent_runs_through_the_confinement_gate() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let h = host(&r, &CONFINED, d.path());
+        let pd = crate::host::testing::project(&h, "t");
+        let a = tunnel_agent(&h, &pd);
+        assert_eq!(a.program_args, ["/usr/local/bin/bunker", "tunnel-run", "t"]);
+        assert_eq!(
+            a.env.get("BUNKER_HOME"),
+            Some(&h.home.to_string_lossy().into_owned())
+        );
+    }
+
+    #[test]
+    fn tunnel_gate_starts_cloudflared_only_when_confined() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let h = host(&r, &CONFINED, d.path());
+        let pd = crate::host::testing::project(&h, "t");
+        let c = tunnel_gate(&h, "t").unwrap();
+        assert_eq!(c.program, "cloudflared");
+        assert_eq!(
+            c.args,
+            [
+                "tunnel",
+                "--no-autoupdate",
+                "--config",
+                &pd.cloudflared_yml().to_string_lossy(),
+                "run"
+            ]
+        );
+        let probe = crate::host::testing::FakeProbe(Confinement::Unconfined {
+            hostagent: 1,
+            reason: "x".into(),
+        });
+        let h = host(&r, &probe, d.path());
+        let e = tunnel_gate(&h, "t").unwrap_err();
+        assert_eq!(
+            (e.code, e.exit),
+            ("tunnel_held", crate::output::ExitCode::Refused)
+        );
+        let h = host(
+            &r,
+            &crate::host::testing::FakeProbe(Confinement::Stopped),
+            d.path(),
+        );
+        assert_eq!(tunnel_gate(&h, "t").unwrap_err().code, "tunnel_held");
     }
 }
