@@ -15,7 +15,7 @@ pub fn artisan_cmd(h: &Host, project: &str, args: &[String], tty: bool) -> Cmd {
     }
     c.args(["--workdir", "/"])
         .arg(vm_name(project))
-        .args(["sudo", "-u", "app", "php", "/srv/app/current/artisan"])
+        .args(["sudo", "-u", "app", "-H", "php", "/srv/app/current/artisan"])
         .args(args.iter().cloned())
         .interactive()
 }
@@ -51,6 +51,7 @@ mod tests {
                 "sudo",
                 "-u",
                 "app",
+                "-H",
                 "php",
                 "/srv/app/current/artisan",
                 "tinker",

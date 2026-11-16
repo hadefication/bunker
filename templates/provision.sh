@@ -117,7 +117,11 @@ BUNKER_EOF
 fi
 
 echo "== 5. users and layout"
-id app >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin app
+id app >/dev/null 2>&1 || useradd --system --user-group --home-dir /var/lib/app --no-create-home --shell /usr/sbin/nologin app
+# A private home (tinker's PsySH needs a writable ~/.config). /var/lib is root's, so app can't
+# replace the entry itself.
+install -d -m 0700 -o app -g app /var/lib/app
+[ "$(getent passwd app | cut -d: -f6)" = /var/lib/app ] || usermod -d /var/lib/app app
 id deploy >/dev/null 2>&1 || useradd --user-group --create-home --shell /bin/bash deploy
 install -d -m 0755 -o root -g root /srv/app /srv/app/shared
 install -d -m 0755 -o deploy -g deploy /srv/app/releases

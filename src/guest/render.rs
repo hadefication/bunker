@@ -386,6 +386,15 @@ mod tests {
     }
 
     #[test]
+    fn app_user_has_a_private_home_for_tinker() {
+        // PsySH (tinker) refuses to run without a writable $HOME/.config.
+        let s = render_provision(&cfg());
+        assert!(s.contains("install -d -m 0700 -o app -g app /var/lib/app"));
+        assert!(s.contains("usermod -d /var/lib/app app"));
+        assert!(!s.contains("--home-dir /nonexistent"));
+    }
+
+    #[test]
     fn provision_turns_off_background_fetches() {
         let s = render_provision(&cfg());
         assert!(
