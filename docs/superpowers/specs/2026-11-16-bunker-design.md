@@ -197,6 +197,22 @@ The exact keys are the builder's to refine. These requirements are fixed:
 - input is validated, and unknown keys are errors
 - `bunker net allow/deny` edit this file
 
+**Allowlist edits** (designer's call, agreed 2026-11-16):
+- `bunker net allow <host>` adds to `[network].allow`; `--build` adds to `[network].build` instead.
+  `deny` and `rm` edit the same lists.
+- The edit is format-preserving (`toml_edit`), so comments and key order survive, and atomic (write a
+  temp file, then rename).
+- The proxy reloads the allowlist at once. No redeploy and no VM restart. A file that fails
+  validation leaves the proxy blocking everything, which is the existing fail-closed rule.
+- Editing the file by hand is equally valid. `bunker net reload` applies a hand edit.
+- Every change, from the command or a reload, prints the before/after diff and is recorded in
+  `network.jsonl`.
+- **Agents may run `net allow`.** The allowlist is a plain file in the maintainer's home directory,
+  so gating the command would not stop an agent that can write files. The CLI therefore does not
+  pretend to be a lock. The control is visibility: the printed diff and the log entry. Moving the
+  allowlist somewhere agents cannot write (the Keychain, a root-owned file) was considered and set
+  aside for the friction it adds.
+
 ### Inside the VM
 
 - Ubuntu 24.04 LTS cloud image.
@@ -237,21 +253,34 @@ The exact keys are the builder's to refine. These requirements are fixed:
 
 ### Containment (host side)
 
-- **Lima template:**
-  - `vmType: vz`, `mounts: []`, `networkOpts.hostLoopback: false` where the proxy route allows it
-    (see below)
-  - no Rosetta, no GUI, audio or clipboard
-  - one port forward: guest `:80` to host `127.0.0.1:<per-project port>`
-- **Sandboxed hostagent:** the hostagent runs under `sandbox-exec` with a generated profile that
-  allows only:
-  - the VM's SSH port
-  - the project's proxy port on loopback
-  - Lima's unix sockets
-  - listening on its web forward port
+This section was updated by the containment test. Its results section below is the evidence.
 
-  devvm's profile is the reference. Bunker verifies on every start that the VM is running under the
-  confined hostagent it launched, and refuses or warns if it isn't, for example when someone ran
-  `limactl start` by hand.
+- **Lima template:**
+  - `vmType: vz`, `mounts: []`, `networkOpts.hostLoopback: false`
+  - `hostResolver.enabled: false`, `dns: ["127.0.0.1"]`, `propagateProxyEnv: false`, a fixed
+    `ssh.localPort`
+  - devvm's three ignore-everything `portForwards` rules, so Lima forwards nothing itself
+  - no Rosetta, no GUI, audio or clipboard
+- **Sandboxed hostagent:** `limactl start` runs under `sandbox-exec` with a generated profile. Its
+  network rules allow only:
+  - connections to Lima's unix sockets in the VM's dir
+  - connections to and listening on the VM's SSH port
+  - listening on unix sockets in the VM's dir
+
+  It denies the DNS-SD mach service. It has **no** proxy rule and no web-port rule. The profile
+  restricts networking only: it starts from `(allow default)`. See the threat model in the results
+  section.
+- **Forwards:** bunker opens two forwards per project. Each one is its own `ssh` process under its
+  own Seatbelt profile, using Lima's ssh config with `ControlMaster=no`, `ControlPath=none`,
+  `ForwardAgent=no`, `ForwardX11=no` and `PermitLocalCommand=no`, and each is supervised so it
+  reconnects after a guest reboot.
+  - **Proxy:** `-R` guest `127.0.0.1:<port>` to the host proxy. Its profile allows outbound only to
+    the SSH port and the proxy port.
+  - **Web:** `-L` host `127.0.0.1:<per-project port>` to guest `:80`, for cloudflared. Its profile
+    allows outbound only to the SSH port, and binding only on the web port.
+- **Wrapped starts only:** bunker always starts VMs through the wrapper. It records the hostagent pid
+  from `ha.pid` and flags a VM running on any other hostagent, for example after a manual
+  `limactl start`, which the test showed reopens the LAN, the tailnet and the internet.
 - **Guest DNS** points at an address with nothing listening. `HTTP(S)_PROXY` is set system-wide plus
   in apt, Composer and npm config.
 - **How the guest reaches the proxy** (designer's call, settled after review). The requirement is that
@@ -264,7 +293,8 @@ The exact keys are the builder's to refine. These requirements are fixed:
      to the proxy port on loopback. This is how devvm does it.
 
   Either one passes the spike. The spike fails, and approach B takes over, only if the Seatbelt
-  profile can't hold the "proxy only" line.
+  profile can't hold the "proxy only" line. **Outcome: route 1 (V2), using an SSH reverse forward.**
+  Route 2 (V1) also passed and stays the fallback.
 - **Proxy:** bunker's own, written in Rust, as a LaunchAgent with one listener per project.
   - Handles HTTP CONNECT and plain HTTP, resolves names itself and connects only to addresses it
     checked.
@@ -468,7 +498,7 @@ bunker rollback <project>
 bunker status [<project>]               VM, services, tunnel, proxy, confinement state, current release
 bunker logs ...
 bunker env set|unset|list ...
-bunker net allow|deny|rm|log [--blocked] ...
+bunker net allow|deny|rm [--build] <host> | net reload | net log [--blocked]
 bunker backup init | backup [list] <project> | restore <project> [<bundle>] [--from <dest>]
 bunker artisan <project> -- <args>      run artisan in the current release as the app user
 bunker shell <project>                  interactive shell in the VM (for the human; see note)
@@ -504,6 +534,114 @@ Before building on it, prove on the mini that:
 3. The web port forward still works under the profile.
 
 If step 2 can't be made to hold, stop and switch to approach B before building further.
+
+## Containment test results (2026-11-16)
+
+Run on the mini (macOS 26.4.1, Lima 2.3.0, Ubuntu 24.04 arm64, `vz`, `mounts: []`), following
+`docs/superpowers/plans/2026-11-16-bunker-containment-spike.md`. tinyproxy stood in for bunker's
+proxy, allowlisting `example.com` and `ports.ubuntu.com`. An independent review found gaps in the
+first run. A second run (the fix pass) added controls and the missing checks, and the numbers below
+come from it. **Containment holds for the tested threat. Approach B isn't needed.**
+
+**Threat model tested.** An attacker has root inside the guest but no exploit for the Lima hostagent
+or for Virtualization.framework. The Seatbelt profile restricts only the hostagent's *networking*. It
+starts from `(allow default)`, so a hostagent code-execution bug, for instance from guest-controlled
+frames, DHCP or DNS, would still get the maintainer's file and process access. Narrowing the profile
+beyond networking (file writes only under the VM dir and logs, process exec only for ssh, fewer mach
+services) is plan 2 work, as long as Lima still runs under it.
+
+**Controls.** A check counts only if it reads `open` unconfined. Rows with no control prove nothing
+and are marked that way.
+
+| check | unconfined (control) | V2 | V2 as root |
+|---|---|---|---|
+| allowed host via proxy | open | open | open |
+| denied host via proxy (CONNECT) | – | – | – |
+| direct TCP / HTTPS to internet | open | – | – |
+| direct UDP DNS to 1.1.1.1 | open | – | – |
+| ICMP to internet | open | – | – |
+| Mac loopback, other port, via 192.168.5.2 | open | – | – |
+| proxy port via 192.168.5.2 | open | – | – |
+| Mac LAN IP (HTTP; SSH :22) | open | – | – |
+| router | open | – | – |
+| tailnet peer and the mini's own tailnet IP | open | – | – |
+| external DNS via the hostagent's resolver at 192.168.5.2, UDP and TCP | open | – | – |
+| TCP ports open on the gateway 192.168.5.2 (full 1–65535 scan) | 52 (every Mac loopback listener, incl. MySQL 3306, Redis 6379, Mailpit 8025/8026, VNC 5900) | 53 only | n/a |
+| hostagent internal DNS zone (`host.lima.internal`) | answers | answers | n/a |
+| Lima services API on gateway:80, expose requests, host binds | not present | not present | n/a |
+| vsock to host CID 2, ports 1–65535 | none | none | n/a |
+| NICs besides `lo` | 1 (`eth0`) | 1 | n/a |
+| 192.168.5.3, DNS and ports 22/53/80/443/2222/8080 | no control (never answered) | – | – |
+| IPv6 to internet | no control (no IPv6 even unconfined) | – | – |
+
+The probe-plus-extended-checks ran as root in V2, so the extended rows are root results. Port 53 on
+the gateway in V2 is the hostagent's in-process DNS. It answers Lima's internal zone but resolves
+nothing external. "As root" means the probe ran under `sudo` after:
+- flushing nftables, which emptied 12 rules
+- re-setting the default route, which was already via 192.168.5.2, so that was close to a no-op
+- pointing resolv.conf at 192.168.5.3, which never answers
+
+Changing guest settings can't matter, because enforcement is entirely on the host. What root added
+were the gateway scan, the vsock scan and the expose attempts.
+
+**apt** worked through the proxy for the allowlisted mirror under V2. With the mirror removed from
+the allowlist, apt failed, and tinyproxy logged 4 `filtered domain "ports.ubuntu.com"` refusals. That
+confirms plain-HTTP filtering. (The first run's "denied" result was really the proxy being down mid-restart.)
+
+**Forwards.**
+- The reverse proxy forward and the web forward each ran as an `ssh` under their own Seatbelt profile.
+  Both worked: the web forward returned HTTP 200 on host `127.0.0.1:18100`.
+- `limactl` listened on nothing but the SSH port, TCP or UDP.
+
+**Reboot.**
+- After `systemctl reboot` in the guest, the boot ID changed and SSH was seen going down.
+- The VM came back on the same sandboxed hostagent (same `ha.pid`).
+- Both forwards dropped. After the reverse forward reconnected, only the allowed host was reachable.
+
+**Unwrapped start.** A plain `limactl start`, without the wrapper, reopened direct internet, DNS,
+ICMP, the Mac's LAN IP and SSH, the router, and both tailnet addresses, even with
+`hostLoopback: false`. Only Mac loopback stayed blocked, thanks to `hostLoopback: false`.
+
+**V1** (devvm's route: host loopback on, the profile allows the proxy port) passed all the first-run
+checks, apt included. It wasn't re-run in the fix pass, so it only carries first-run evidence: no
+DNS-resolver, gateway-scan, vsock or reboot-proof checks. It stays the fallback.
+
+The final hostagent profile needed no rules beyond the template:
+
+```
+(version 1)
+(allow default)
+(deny network-outbound)
+(allow network-outbound (remote unix-socket (subpath "<realpath ~/.lima>/<vm>")))
+(deny mach-lookup (global-name "com.apple.dnssd.service"))
+(allow network-outbound (remote ip "localhost:<ssh port>"))
+(deny network-bind)
+(allow network-bind (local tcp "localhost:<ssh port>"))
+(allow network-bind (local unix-socket (subpath "<realpath ~/.lima>/<vm>")))
+```
+
+**Findings plan 2 must carry:**
+- **The gap was real and serious.** Unconfined, the guest reached `webteractiveglen` over Tailscale,
+  the mini's SSH on its LAN IP, and every service on the Mac's loopback, including Yard's MySQL and
+  Redis.
+- **Lima's SSH multiplexing master inherits the sandbox.** Lima's `ssh.config` uses
+  `ControlMaster auto`, and the master is spawned by the sandboxed `limactl start`. A forward
+  multiplexed onto it runs sandboxed. That was the first V2 run's failure, observed live as
+  `proxy_allowed` blocked, then 200 with a standalone connection. Its raw output was overwritten, so
+  that run's evidence is the ledger note. Bunker's forwards use `ControlMaster=no` and
+  `ControlPath=none`.
+- **Forwards drop on guest reboot** and must be supervised so they reconnect.
+- **Every VM start must go through the wrapper,** and `bunker status` must flag a VM that didn't.
+  `ha.pid` comparison detects a swapped hostagent, not confinement itself. Checking the pid with
+  libsandbox's `sandbox_check` is worth trying.
+- **Provisioning ran unconfined here,** with DNS on. Bunker must provision through the proxy with the
+  build allowlist from the first boot. That's untested.
+- **The guest can't resolve its own hostname without DNS** (`sudo: unable to resolve host`). Bunker
+  writes the hostname into `/etc/hosts`.
+- **The real proxy needs its own tests:** CONNECT and absolute-URI requests to IP literals, to
+  internal ranges, to the Mac's LAN and tailnet IPs, and to names resolving to internal addresses.
+- **Harness rule for plan 2's tests:** every check expected to be blocked under confinement needs a
+  passing unconfined control. Logs append rather than truncate, and a failing run's output is kept.
 
 ## Left to the builder
 
