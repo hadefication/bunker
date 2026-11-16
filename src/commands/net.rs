@@ -103,7 +103,25 @@ impl Report for NetReport {
     }
 }
 
+/// Escapes control characters (ESC, C1, newlines). Hosts in decision events come from the guest's
+/// own requests, so a compromised VM must not be able to drive the operator's terminal.
+fn clean(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_unicode().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
 fn describe(e: &NetEvent) -> String {
+    clean(&describe_raw(e))
+}
+
+fn describe_raw(e: &NetEvent) -> String {
     match &e.kind {
         EventKind::Decision {
             host,
@@ -304,4 +322,26 @@ fn log_policy(pd: &ProjectDir, source: &str, cfg: &Config) -> Result<()> {
             },
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_lines_escape_guest_controlled_text() {
+        let e = NetEvent::now(
+            "p",
+            EventKind::Decision {
+                host: "evil\u{1b}]0;pwned\u{7}\u{9b}31m.example\nfake line".into(),
+                port: 443,
+                phase: "run".into(),
+                verdict: "block".into(),
+                reason: "not_listed".into(),
+            },
+        );
+        let line = describe(&e);
+        assert!(!line.chars().any(char::is_control), "{line:?}");
+        assert!(line.contains("evil\\u{1b}]0;pwned"), "{line}");
+    }
 }
