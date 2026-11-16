@@ -382,7 +382,10 @@ mod tests {
         assert!(s.contains("systemctl disable --now systemd-resolved"));
         assert!(s.contains("nameserver 127.0.0.1"));
         assert!(s.contains("options timeout:1 attempts:1"));
-        assert!(s.contains("[ -L /etc/resolv.conf ]"), "the stub symlink is replaced, not written through");
+        assert!(
+            s.contains("[ -L /etc/resolv.conf ]"),
+            "the stub symlink is replaced, not written through"
+        );
     }
 
     #[test]

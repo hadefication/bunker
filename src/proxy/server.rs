@@ -232,8 +232,9 @@ impl Ctx {
         }
         self.decision(&host, port, phases, "allow", d.reason.as_str());
         let mut upstream = None;
-        for a in &addrs {
-            if let Ok(s) = self.connector.connect(*a).await {
+        for a in connect_order(&addrs) {
+            // A route that swallows packets (often IPv6 at home) costs one short attempt.
+            if let Ok(Ok(s)) = tokio::time::timeout(ATTEMPT, self.connector.connect(a)).await {
                 upstream = Some(s);
                 break;
             }
@@ -317,6 +318,21 @@ fn strip_hop_by_hop(h: &mut HeaderMap) {
     for n in proxy {
         h.remove(n);
     }
+}
+
+/// How long one address gets before the next is tried.
+const ATTEMPT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The checked addresses, IPv4 first and then alternating families, so a broken IPv6 route
+/// doesn't stall a host that resolves IPv6 first.
+fn connect_order(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    let (v4, v6): (Vec<SocketAddr>, Vec<SocketAddr>) = addrs.iter().partition(|a| a.is_ipv4());
+    let mut out = Vec::with_capacity(addrs.len());
+    for i in 0..v4.len().max(v6.len()) {
+        out.extend(v4.get(i));
+        out.extend(v6.get(i));
+    }
+    out
 }
 
 async fn forward(

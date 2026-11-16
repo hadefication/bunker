@@ -1,0 +1,13 @@
+{
+  "dns_gw_udp_external": "blocked",
+  "dns_gw_tcp_external": "blocked",
+  "dns_lima3_tcp_external": "blocked",
+  "dns_gw_internal_zone": "reachable",
+  "gw_open_tcp": {"result": "reachable", "detail": "53"},
+  "lima3_open_tcp": "blocked",
+  "gw_services_api": "blocked",
+  "gw_expose_tcp_accepted": "blocked",
+  "gw_expose_unix_accepted": "blocked",
+  "vsock_host_open": "blocked",
+  "extra_nics": "blocked"
+}

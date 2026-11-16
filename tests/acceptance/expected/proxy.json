@@ -1,0 +1,7 @@
+{
+  "connect_10_0_0_1": "403",
+  "nip_loopback_allowed": "403",
+  "nip_lan_allowed": "403",
+  "nip_tailnet_self": "403",
+  "metadata_http": "403"
+}

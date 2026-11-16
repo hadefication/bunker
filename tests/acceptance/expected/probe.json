@@ -1,0 +1,18 @@
+{
+  "proxy_allowed": "reachable",
+  "proxy_denied": "blocked",
+  "direct_tcp_internet": "blocked",
+  "direct_https_internet": "blocked",
+  "direct_udp_dns": "blocked",
+  "lima_dns": "blocked",
+  "system_resolver": "blocked",
+  "host_loopback_other_port": "blocked",
+  "proxy_via_lima_ip": "blocked",
+  "host_lan_ip": "blocked",
+  "host_lan_ssh": "blocked",
+  "router": "blocked",
+  "tailnet_peer": "blocked",
+  "tailnet_self": "blocked",
+  "ipv6_internet": "blocked",
+  "icmp_internet": "blocked"
+}

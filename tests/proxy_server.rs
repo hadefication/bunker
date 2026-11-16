@@ -15,6 +15,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const PUBLIC: &str = "93.184.215.14";
+/// A public IPv6 address whose route is broken (common on home networks).
+const PUBLIC_V6_BROKEN: &str = "2606:4700:4700::1111";
 
 struct FakeResolver(HashMap<String, Vec<IpAddr>>);
 
@@ -45,6 +47,9 @@ impl Connector for FakeConnector {
         Box::pin(async move {
             if addr.ip().to_string() == PUBLIC && (addr.port() == 443 || addr.port() == 80) {
                 TcpStream::connect(up).await
+            } else if addr.ip().to_string() == PUBLIC_V6_BROKEN {
+                // A route that swallows packets: the connect never completes.
+                std::future::pending().await
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::ConnectionRefused,
@@ -439,4 +444,23 @@ async fn garbage_host_is_rejected_400_and_never_logged_raw() {
     let h = Harness::new(&[("fixture", &[])], &[], vec![]).await;
     let (status, _, _) = connect(h.addrs[0], "ev%1bil.test:443").await;
     assert_eq!(status, 400);
+}
+
+#[tokio::test]
+async fn broken_ipv6_does_not_stall_a_dual_stack_host() {
+    // ppa.launchpadcontent.net resolves IPv6 first; with IPv6 unusable, trying each address in
+    // order made apt give up before the proxy reached IPv4.
+    let h = Harness::new(
+        &[("fixture", &["example.com"])],
+        &[("example.com", &[PUBLIC_V6_BROKEN, PUBLIC_V6_BROKEN, PUBLIC])],
+        vec![],
+    )
+    .await;
+    let (status, _, _s) = tokio::time::timeout(
+        Duration::from_secs(4),
+        connect(h.addrs[0], "example.com:443"),
+    )
+    .await
+    .expect("connected without waiting out the IPv6 attempts");
+    assert_eq!(status, 200);
 }
