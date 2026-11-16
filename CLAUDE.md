@@ -21,6 +21,11 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
 - `src/lima/`: the Lima template (containment settings fixed), the Seatbelt profiles for the
   hostagent and both SSH forwards, and the Ubuntu image bunker downloads and verifies itself
   (a sandboxed `limactl start` has no network). Images live in `~/.bunker/images/`.
+- `src/host.rs`: `Host`, everything a command needs from the machine (runner, confinement probe,
+  paths, limactl, poll timing). Tests build one with `host::testing::host`.
+- `src/lima/vm.rs`: limactl version, instances, the vm and forward agents, readiness wait.
+  `src/lima/confine.rs`: `ConfinementProbe`; `SystemProbe` reads `ha.pid` and asks
+  `sandbox_check` whether that process is sandboxed.
 - `src/launchd.rs`: labels, plist rendering, install/remove/kickstart/status via `launchctl` in
   `gui/<uid>`. `BUNKER_LAUNCH_AGENTS_DIR` overrides `~/Library/LaunchAgents`.
 - `src/run.rs`: every external program goes through the `Runner` trait. Tests use

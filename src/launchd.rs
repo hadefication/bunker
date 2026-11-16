@@ -185,6 +185,18 @@ fn bootout(r: &dyn Runner, label: &str) -> Result<()> {
     }
 }
 
+/// Installs only when the plist on disk differs or the job isn't loaded, so re-running `up` never
+/// restarts a running VM. Returns whether it installed.
+pub fn ensure_in(r: &dyn Runner, dir: &Path, a: &Agent) -> Result<bool> {
+    let plist = dir.join(format!("{}.plist", a.label));
+    let same = std::fs::read_to_string(&plist).is_ok_and(|t| t == render_plist(a));
+    if same && status(r, &a.label)?.loaded {
+        return Ok(false);
+    }
+    install_in(r, dir, a)?;
+    Ok(true)
+}
+
 pub fn remove(r: &dyn Runner, label: &str) -> Result<()> {
     remove_in(r, &agents_dir(), label)
 }
@@ -433,6 +445,31 @@ mod tests {
                 "print".to_string(),
                 format!("gui/{}/com.bunker.p.vm", uid())
             ]
+        );
+    }
+
+    #[test]
+    fn ensure_skips_an_unchanged_loaded_agent() {
+        let d = tempfile::tempdir().unwrap();
+        let loaded = "x = {\n\tstate = running\n\tpid = 7\n}\n";
+        let r = RecordingRunner::new();
+        r.respond(
+            "launchctl",
+            &["print"],
+            Output::fail(113, "Could not find service"),
+        );
+        assert!(ensure_in(&r, d.path(), &agent()).unwrap(), "first install");
+        let r = RecordingRunner::new();
+        r.respond("launchctl", &["print"], Output::ok(loaded));
+        assert!(!ensure_in(&r, d.path(), &agent()).unwrap());
+        assert_eq!(r.calls().len(), 1, "only the status check");
+        let mut changed = agent();
+        changed.throttle_secs = Some(9);
+        let r = RecordingRunner::new();
+        r.respond("launchctl", &["print"], Output::ok(loaded));
+        assert!(
+            ensure_in(&r, d.path(), &changed).unwrap(),
+            "a changed plist reinstalls"
         );
     }
 

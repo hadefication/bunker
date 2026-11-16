@@ -18,6 +18,11 @@ Every command prints readable output by default. For agents and scripts, add `--
 | Command | What it does |
 | --- | --- |
 | `bunker init <project> --path <repo> [--domain D] [--tunnel T] [--php V] [--force]` | Detect the Laravel app (PHP from composer.json's constraint, extensions, Node, Passport), pick free ports and write a commented `~/.bunker/<project>/bunker.toml` (mode 0600). The tunnel defaults to the project name when `--domain` is given |
+| `bunker up <project>` | Create (first time) and start the project's confined VM: downloads and verifies the Ubuntu image, writes the Lima template and Seatbelt profiles, starts the proxy, the VM and both SSH forwards as LaunchAgents, and reports whether the VM is confined. Safe to re-run |
+| `bunker start <project>` | Start a stopped VM and its forwards |
+| `bunker stop <project>` | Stop the forwards and the VM. Nothing comes back at login until `start` or `up` |
+| `bunker restart <project>` | Stop, then start |
+| `bunker destroy <project> [--yes]` | Delete the VM (its database and storage go with it), its agents and generated files. Keeps `bunker.toml`, backups and logs. Asks you to type the project name unless `--yes` |
 | `bunker net allow <host> [project] [--build]` | Let the running site reach a host (`host`, `*.domain` for subdomains, or a public IP; ports 80 and 443 unless you write `host:port`). `--build` allows it only while a deploy runs. Removes it from `deny` |
 | `bunker net deny <host> [project]` | Block a host even when a wildcard allows it; removes it from `allow` and `build` |
 | `bunker net rm <host> [project]` | Remove a host from all three lists |
@@ -34,6 +39,9 @@ result that would not validate, and print a `+`/`-` diff. Every change is append
 `~/.bunker/<project>/network.jsonl`. Agents may run `net allow`: the allowlist is a file in your
 home directory either way, so the control is that every change is visible, not that the command is
 locked.
+
+A VM only ever starts through its LaunchAgent, under `sandbox-exec`. A VM started any other way
+(a manual `limactl start`) is not confined: `up`, `start` and `restart` report it and exit `5`.
 
 Exit codes: `0` ok · `1` failure or degraded · `2` usage · `3` not found · `4` refused · `5` unconfined VM.
 

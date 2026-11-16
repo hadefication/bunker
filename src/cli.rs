@@ -50,6 +50,21 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Create (first time) and start the project's confined VM, proxy and forwards. Idempotent.
+    Up { project: String },
+    /// Start a stopped VM and its forwards.
+    Start { project: String },
+    /// Stop the forwards and the VM. Nothing restarts at login until start or up.
+    Stop { project: String },
+    /// Stop, then start.
+    Restart { project: String },
+    /// Delete the VM, its agents and generated files. Keeps bunker.toml, backups and logs.
+    Destroy {
+        project: String,
+        /// Skip typing the project name to confirm.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Edit and inspect the project's outbound allowlist.
     Net {
         #[command(subcommand)]
