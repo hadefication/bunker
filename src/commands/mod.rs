@@ -1,8 +1,10 @@
+pub mod deploy;
 pub mod destroy;
 pub mod env;
 pub mod init;
 pub mod lifecycle;
 pub mod net;
 pub mod proxy;
+pub mod rollback;
 pub mod up;
 pub mod version;

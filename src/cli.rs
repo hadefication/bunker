@@ -58,6 +58,18 @@ pub enum Command {
     Stop { project: String },
     /// Stop, then start.
     Restart { project: String },
+    /// Build and switch to a new release of the repo's HEAD: composer, npm, audits, caches, hooks.
+    Deploy {
+        project: String,
+        /// Ship uncommitted changes to tracked files (untracked files never go).
+        #[arg(long)]
+        dirty: bool,
+        /// Deploy even when composer or npm audit reports security advisories.
+        #[arg(long)]
+        allow_advisories: bool,
+    },
+    /// Switch back to the previous release. Migrations are not rolled back.
+    Rollback { project: String },
     /// Delete the VM, its agents and generated files. Keeps bunker.toml, backups and logs.
     Destroy {
         project: String,

@@ -54,6 +54,28 @@ fn main() {
         Command::Restart { project } => {
             with_host(format, |h| commands::lifecycle::restart(h, &project))
         }
+        Command::Deploy {
+            project,
+            dirty,
+            allow_advisories,
+        } => {
+            let store = bunker::secrets::keychain::KeychainStore::from_env();
+            let opts = commands::deploy::DeployOpts {
+                dirty,
+                allow_advisories,
+            };
+            let progress = |s: &commands::deploy::StepResult| {
+                if matches!(format, Format::Human) {
+                    println!("{}", commands::deploy::step_line(s));
+                }
+            };
+            with_host(format, |h| {
+                commands::deploy::deploy(h, &store, &project, opts, &progress)
+            })
+        }
+        Command::Rollback { project } => {
+            with_host(format, |h| commands::rollback::rollback(h, &project))
+        }
         Command::Destroy { project, yes } => match commands::destroy::confirm(&project, yes) {
             Ok(()) => with_host(format, |h| commands::destroy::destroy(h, &project)),
             Err(e) => output::emit_error(format, &e),

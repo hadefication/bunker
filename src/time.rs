@@ -17,6 +17,11 @@ pub fn rfc3339(t: SystemTime) -> String {
     )
 }
 
+/// `YYYYMMDDTHHMMSSZ`: sortable, and safe in a path.
+pub fn compact(t: SystemTime) -> String {
+    rfc3339(t).replace(['-', ':'], "")
+}
+
 /// Days since 1970-01-01 to (year, month, day), proleptic Gregorian (Howard Hinnant's algorithm).
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
