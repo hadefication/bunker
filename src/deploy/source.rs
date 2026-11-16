@@ -61,10 +61,15 @@ pub fn build_archive(repo: &Path, dirty: bool) -> Result<Archive> {
         .hint("commit them, or deploy the working tree as it is with --dirty"));
     }
     let tar = if modified {
-        let list = git(repo, &["ls-files", "-z"])?;
+        // `<mode> <sha> <stage>\t<path>`; a submodule (gitlink, mode 160000) is skipped, as
+        // git archive skips it: its directory would carry whatever is in it, .env files too.
+        let list = git(repo, &["ls-files", "-s", "-z"])?;
         let files: Vec<&str> = list
             .split(|b| *b == 0)
-            .filter_map(|f| std::str::from_utf8(f).ok())
+            .filter_map(|e| std::str::from_utf8(e).ok())
+            .filter_map(|e| e.split_once('\t'))
+            .filter(|(meta, _)| !meta.starts_with("160000 "))
+            .map(|(_, path)| path)
             .filter(|f| !f.is_empty() && !is_env_path(f))
             .collect();
         tar_worktree(repo, &files)?
@@ -107,6 +112,8 @@ fn tar_worktree(repo: &Path, files: &[&str]) -> Result<Vec<u8>> {
                 "--gid",
                 "0",
                 "--null",
+                // Names only, never a directory's contents.
+                "--no-recursion",
                 "-cf",
                 "-",
                 "-T",
@@ -251,6 +258,37 @@ mod tests {
             })
             .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "changed\n");
+    }
+
+    #[test]
+    fn dirty_archive_skips_submodule_contents() {
+        // A submodule is one gitlink entry in ls-files; handing tar that directory would pack
+        // everything in it, .env files included.
+        let sub = tempfile::tempdir().unwrap();
+        git(sub.path(), &["init", "-q"]);
+        std::fs::write(sub.path().join(".env"), "SECRET=1\n").unwrap();
+        std::fs::write(sub.path().join("lib.php"), "x\n").unwrap();
+        git(sub.path(), &["add", "-f", "."]);
+        git(sub.path(), &["commit", "-qm", "sub"]);
+        let r = repo();
+        git(
+            r.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                sub.path().to_str().unwrap(),
+                "vendor/sub",
+            ],
+        );
+        git(r.path(), &["commit", "-qm", "add sub"]);
+        std::fs::write(r.path().join("app/x.php"), "changed\n").unwrap();
+        let a = build_archive(r.path(), true).unwrap();
+        let got = names(&a.tar);
+        assert!(got.iter().all(|n| !n.starts_with("vendor/sub")), "{got:?}");
+        assert!(got.contains(&"app/x.php".to_string()));
     }
 
     #[test]

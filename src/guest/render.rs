@@ -130,6 +130,7 @@ fn packages(cfg: &Config) -> String {
         "gnupg",
         "unzip",
         "git",
+        "acl",
     ] {
         pkgs.push(p.into());
     }
@@ -443,6 +444,10 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("percona-server-server"));
+        assert!(
+            line.split(' ').any(|p| p == "acl"),
+            "setfacl for deploy's link_shared"
+        );
     }
 
     #[test]

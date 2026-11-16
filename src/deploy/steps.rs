@@ -114,14 +114,18 @@ npm run build\nrm -rf node_modules",
             true,
         ));
     }
+    // All as deploy, which owns the release: app gets write access to bootstrap/cache through an
+    // ACL deploy sets on its own directory, so no root call ever resolves a path in the release.
     s.push(step(
         "link_shared",
-        As::Root,
-        format!(
-            "set -euo pipefail\n\
-runuser -u deploy -- bash -c 'set -e; cd {dir}; rm -rf storage; ln -sfn {BASE}/shared/storage storage; \
-ln -sfn {BASE}/shared/.env .env; mkdir -p bootstrap/cache; chmod 2775 bootstrap/cache'\n\
-chgrp -h app {dir}/bootstrap/cache\n"
+        As::Deploy,
+        in_release(
+            &dir,
+            false,
+            &format!(
+                "rm -rf storage\nln -sfn {BASE}/shared/storage storage\nln -sfn {BASE}/shared/.env .env\n\
+mkdir -p bootstrap/cache\nsetfacl -m u:app:rwx,d:u:app:rwx bootstrap/cache"
+            ),
         ),
         false,
     ));
@@ -330,6 +334,22 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn link_shared_needs_no_root() {
+        // A root chgrp, even with -h, follows a symlinked parent component (bootstrap -> /var)
+        // that deploy, or a process a composer script left running, could plant.
+        let s = steps(&cfg(true), "r1", true, false);
+        let link = s.iter().find(|s| s.name == "link_shared").unwrap();
+        assert_eq!(link.run_as, As::Deploy);
+        assert!(
+            link.cmd
+                .contains("setfacl -m u:app:rwx,d:u:app:rwx bootstrap/cache"),
+            "{}",
+            link.cmd
+        );
+        assert!(s.iter().all(|s| !s.cmd.contains("chgrp")));
     }
 
     #[test]
