@@ -106,15 +106,7 @@ impl Report for NetReport {
 /// Escapes control characters (ESC, C1, newlines). Hosts in decision events come from the guest's
 /// own requests, so a compromised VM must not be able to drive the operator's terminal.
 fn clean(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_control() {
-                c.escape_unicode().to_string()
-            } else {
-                c.to_string()
-            }
-        })
-        .collect()
+    crate::output::printable(s).into_owned()
 }
 
 fn describe(e: &NetEvent) -> String {

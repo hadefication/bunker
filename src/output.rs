@@ -28,6 +28,26 @@ pub trait Report {
     }
 }
 
+/// Text from outside bunker (guest logs, a visitor's URL, a guest command's output) with control
+/// characters escaped, so it can't move the cursor, retitle the window or hide lines in a
+/// terminal. Tabs stay.
+pub fn printable(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.chars().any(|c| c.is_control() && c != '\t') {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    std::borrow::Cow::Owned(
+        s.chars()
+            .map(|c| {
+                if c.is_control() && c != '\t' {
+                    c.escape_unicode().to_string()
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect(),
+    )
+}
+
 pub fn ok_envelope(data: Value) -> Value {
     json!({"ok": true, "data": data})
 }

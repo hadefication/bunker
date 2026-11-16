@@ -120,7 +120,7 @@ pub fn logs(
         }
     }
     let scrubber = Scrubber::new(known);
-    let mut emit = |l: &str| out(&scrubber.scrub(l));
+    let mut emit = |l: &str| out(&crate::output::printable(&scrubber.scrub(l)));
     if let Some(script) = guest_script(&cfg, source, follow_on, n) {
         let cmd = shell(h, &vm_name(project))
             .args(["sudo", "bash", "-s"])
@@ -218,6 +218,32 @@ mod tests {
         .unwrap();
         assert_eq!(got, ["b Authorization: [redacted]", "c"]);
         assert!(r.calls().is_empty(), "no guest call for a host log");
+    }
+
+    #[test]
+    fn control_characters_never_reach_the_terminal() {
+        // nginx's access log holds whatever URL or user agent a visitor sent.
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        r.respond(
+            "limactl",
+            &["shell"],
+            Output::ok("GET /\u{1b}]0;owned\u{7} HTTP/1.1\tok\n"),
+        );
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        let mut got = Vec::new();
+        logs(
+            &h,
+            &MemoryStore::default(),
+            "t",
+            Source::Nginx,
+            false,
+            5,
+            &mut |l| got.push(l.to_string()),
+        )
+        .unwrap();
+        assert_eq!(got, ["GET /\\u{1b}]0;owned\\u{7} HTTP/1.1\tok"]);
     }
 
     #[test]

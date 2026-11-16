@@ -280,7 +280,10 @@ fn one(h: &Host, name: &str) -> Result<One> {
             let out = h.r.run(&shell(h, &vm).args(["sudo", "bash", "-s"]).stdin(
                 format!("systemctl is-active {} || true\n", units.join(" ")).into_bytes(),
             ))?;
-            out.stdout_str().lines().map(str::to_string).collect()
+            out.stdout_str()
+                .lines()
+                .map(|l| crate::output::printable(l).into_owned())
+                .collect()
         } else {
             Vec::new()
         };
