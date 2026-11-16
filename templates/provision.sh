@@ -70,6 +70,18 @@ else
   echo "127.0.1.1 $h" >> /etc/hosts
 fi
 
+echo "== 1b. no DNS in the guest"
+# The proxy resolves every host. systemd-resolved only waited out timeouts on the Lima gateway
+# (which can't resolve outside names) and carried the Mac's search domain in; any lookup now fails
+# at once, so a package's background lookup can't stall a service start.
+systemctl disable --now systemd-resolved >/dev/null 2>&1 || true
+[ -L /etc/resolv.conf ] && rm -f /etc/resolv.conf
+put /etc/resolv.conf 0644 root:root <<'BUNKER_EOF' || true
+# Written by bunker up: the guest has no DNS; everything goes through the egress proxy.
+nameserver 127.0.0.1
+options timeout:1 attempts:1
+BUNKER_EOF
+
 echo "== 2. proxy settings"
 put /etc/environment 0644 root:root <<'BUNKER_EOF' || true
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"

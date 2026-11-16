@@ -374,6 +374,18 @@ mod tests {
     }
 
     #[test]
+    fn guest_name_resolution_fails_fast() {
+        // The guest has no DNS (the proxy resolves every host). systemd-resolved waited out
+        // timeouts on the Lima gateway, which stalled every php-fpm start 17 s on ondrej's
+        // telemetry lookup, and carried the Mac's search domain into the guest.
+        let s = render_provision(&cfg());
+        assert!(s.contains("systemctl disable --now systemd-resolved"));
+        assert!(s.contains("nameserver 127.0.0.1"));
+        assert!(s.contains("options timeout:1 attempts:1"));
+        assert!(s.contains("[ -L /etc/resolv.conf ]"), "the stub symlink is replaced, not written through");
+    }
+
+    #[test]
     fn provision_turns_off_background_fetches() {
         let s = render_provision(&cfg());
         assert!(

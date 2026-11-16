@@ -252,6 +252,11 @@ The exact keys are the builder's to refine. These requirements are fixed:
 - nginx carries over old bunker's hardened headers: `X-Content-Type-Options`, `X-Frame-Options`,
   `Referrer-Policy` and `Permissions-Policy`, with `server_tokens off` and `X-Powered-By` stripped.
   It sets the real client IP from `CF-Connecting-IP`, trusted only from the port-forward source.
+- The guest has no DNS: provisioning disables systemd-resolved and points `/etc/resolv.conf` at a
+  port nothing listens on, so a lookup fails at once. The proxy resolves every host. (With resolved
+  left on, lookups waited out timeouts on the Lima gateway, which stalled every php-fpm start 17 s
+  on the ondrej packages' telemetry lookup, and the Mac's DNS search domain leaked in. Found by the
+  plan 2 acceptance run.)
 - A guest-side nftables firewall that drops private and loopback-of-host destinations is defense in
   depth. Most web exploits land as `app`, not root. The host-side confinement is the real boundary.
 
