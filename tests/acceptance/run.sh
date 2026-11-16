@@ -124,8 +124,13 @@ probe_env() {
 # probes' proxy checks pass -x themselves.
 NOPROXY=(-u http_proxy -u HTTP_PROXY -u https_proxy -u HTTPS_PROXY -u no_proxy -u NO_PROXY)
 
+copy_probes() { # /tmp in the guest is cleared by a reboot
+  limactl copy "$HERE/probe.sh" "$HERE/probe2.sh" "$VM:/tmp/" >>"$RUN/copy.log" 2>&1 || setup "limactl copy failed"
+}
+
 run_probe() { # <name> [--root-tamper]
   local name=$1; shift
+  copy_probes
   # shellcheck disable=SC2046
   gsh sudo env "${NOPROXY[@]}" $(probe_env) bash /tmp/probe.sh "$@" "$PROXY_URL" >"$RUN/$name.jsonl" 2>>"$RUN/probe.err"
   "$HERE/compare.sh" "$RUN/$name.jsonl" "$HERE/expected/probe.json" >"$RUN/$name.diff" ||
@@ -137,7 +142,6 @@ phase_probe() {
   start_listeners
   gsh sh -c 'command -v dig && command -v nc && command -v curl && command -v ping' >/dev/null ||
     setup "the guest lacks dig, nc, curl or ping, so its checks would pass for the wrong reason"
-  limactl copy "$HERE/probe.sh" "$HERE/probe2.sh" "$VM:/tmp/" >>"$RUN/copy.log" 2>&1 || setup "limactl copy failed"
   run_probe probe
   # probe2 measures what the Lima gateway exposes to the guest; root can remove the guest's own
   # firewall, so that is measured without it (and the firewall's drops would make its port scan

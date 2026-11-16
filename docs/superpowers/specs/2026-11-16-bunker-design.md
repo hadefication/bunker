@@ -678,6 +678,27 @@ The final hostagent profile needed no rules beyond the template:
 - **Harness rule for plan 2's tests:** every check expected to be blocked under confinement needs a
   passing unconfined control. Logs append rather than truncate, and a failing run's output is kept.
 
+### Plan 2 acceptance (2026-11-16)
+
+`tests/acceptance/run.sh all` passed on the mini against a disposable Laravel 12 fixture (PHP 8.5,
+Percona 8.4, Node 22): fixture, up, deploy, controls, probe (plain, probe2, and root with the guest
+firewall flushed), proxy, roundtrip, reboot, unwrapped, rollback, cleanup. Every guest check came
+back blocked except `proxy_allowed`; every host control was reachable; allowlisted names that
+resolve inside (`127.0.0.1.nip.io`, `<LAN>.nip.io`) were refused as `internal_address`; a plain
+`limactl start` was reported unconfined (exit 5) and refused by deploy. Getting there found and fixed:
+
+- Lima's boot scripts (cloud-init final stage) cut every SSH session open when they run, and the
+  sandboxed `limactl start --foreground` returns before Lima's readiness wait: up and start now
+  wait for cloud-init and the proxy forward.
+- The proxy tried a host's addresses in resolver order, 10 s each; IPv6-first hosts with no IPv6
+  route (the ondrej PPA from the mini) timed apt out. Now IPv4 first, alternating, 3 s each.
+- systemd-resolved waited out the gateway's DNS timeouts, so php-fpm (the ondrej build looks up a
+  telemetry host at start) took 17 s to start or reload. The guest now has no resolver.
+- tinker couldn't run as `app` (home `/nonexistent`); app now has a private home.
+- Harness fixes: probes run with the proxy variables cleared (sudo reads `/etc/environment`),
+  probe2 measures the gateway without the guest firewall (as root could), probes are copied again
+  after a reboot clears `/tmp`.
+
 ## Left to the builder
 
 - Crate layout, module structure and which crates to use (subject to `cargo deny`).
