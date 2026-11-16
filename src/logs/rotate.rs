@@ -52,11 +52,28 @@ pub fn rotate(path: &Path, max: u64, keep: u32, mode: Mode) -> std::io::Result<b
 /// (from `policy-state.json`, never by reading the log) into the fresh file, so status and
 /// `net log` don't lose the policy state to a flood of decisions.
 pub fn rotate_network_log(path: &Path) {
+    // One rotation at a time: the proxy appends from many tasks, and two that cross the limit
+    // together would each shift the copies. Held, the size is checked again inside rotate.
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let Ok(lock) = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path.with_extension("jsonl.lock"))
+    else {
+        return;
+    };
+    // SAFETY: flock on a descriptor this function owns; released when `lock` drops.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return;
+    }
     if rotate(path, MAX_BYTES, KEEP, Mode::Rename).unwrap_or(false)
         && let Ok(line) = std::fs::read(policy_state_path(path))
     {
         use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
         let _ = std::fs::OpenOptions::new()
             .append(true)
             .create(true)
@@ -207,6 +224,32 @@ mod tests {
             "rotated on the append that crossed the limit"
         );
         assert!(std::fs::metadata(&log).map(|m| m.len()).unwrap_or(0) < 4096);
+    }
+
+    #[test]
+    fn concurrent_rotations_shift_history_once() {
+        // The proxy appends from many tasks; two crossing the limit together must not both rotate
+        // (the second would shift the first's .1 to .2 and evict a generation).
+        for _ in 0..20 {
+            let d = tempfile::tempdir().unwrap();
+            let log = d.path().join("network.jsonl");
+            std::fs::write(&log, vec![b'\n'; MAX_BYTES as usize + 1]).unwrap();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+            let handles: Vec<_> = (0..16)
+                .map(|_| {
+                    let (log, barrier) = (log.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        rotate_network_log(&log);
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap();
+            }
+            assert!(d.path().join("network.jsonl.1").exists());
+            assert!(!d.path().join("network.jsonl.2").exists(), "rotated twice");
+        }
     }
 
     #[test]
