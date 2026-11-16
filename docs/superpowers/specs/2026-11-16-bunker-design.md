@@ -267,8 +267,9 @@ This section was updated by the containment test. Its results section below is t
   - connections to and listening on the VM's SSH port
   - listening on unix sockets in the VM's dir
 
-  It denies the DNS-SD mach service. It has **no** proxy rule and no web-port rule. The profile
-  restricts networking only: it starts from `(allow default)`. See the threat model in the results
+  It denies the DNS-SD mach service. It has **no** proxy rule and no web-port rule. It starts from
+  `(allow default)`; plan 2 added file-write and exec restrictions (see the hardening note under the
+  threat model). See the threat model in the results
   section.
 - **Forwards:** bunker opens two forwards per project. Each one is its own `ssh` process under its
   own Seatbelt profile, using Lima's ssh config with `ControlMaster=no`, `ControlPath=none`,
@@ -549,6 +550,14 @@ starts from `(allow default)`, so a hostagent code-execution bug, for instance f
 frames, DHCP or DNS, would still get the maintainer's file and process access. Narrowing the profile
 beyond networking (file writes only under the VM dir and logs, process exec only for ssh, fewer mach
 services) is plan 2 work, as long as Lima still runs under it.
+
+**Plan 2 hardening (as built, 2026-11-16).** The hostagent profile now also denies file writes except
+under the VM dir, Lima's `_config`, the per-user temp dir, `/dev/null`, `/dev/tty*` and `/dev/ptmx`,
+and denies exec except for `limactl` (the symlink and its Cellar path), `/usr/bin/ssh`,
+`/usr/bin/sw_vers`, `/usr/sbin/system_profiler`, `/bin/sh` and `/bin/bash`. The last four were the
+bounded additions Lima 2.3.0 needed to start (`sw_vers` and `system_profiler` for the vz driver,
+`sh`/`bash` for its SSH readiness script); children inherit the exec rule, so the shells can still
+run only those binaries. File reads and mach services are not narrowed.
 
 **Controls.** A check counts only if it reads `open` unconfined. Rows with no control prove nothing
 and are marked that way.

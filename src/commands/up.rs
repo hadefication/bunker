@@ -104,7 +104,13 @@ pub fn up(h: &Host, project: &str) -> Result<UpReport> {
     let vm_dir = lima_vm_dir(&h.lima_home, &vm)?;
     write_private(
         &pd.sandbox_sb(),
-        hostagent_profile(&vm_dir, cfg.ports.ssh).as_bytes(),
+        hostagent_profile(
+            &vm_dir,
+            cfg.ports.ssh,
+            &h.limactl,
+            &crate::lima::sandbox::user_temp_dir(),
+        )
+        .as_bytes(),
     )?;
     write_private(
         &pd.fwd_proxy_sb(),
