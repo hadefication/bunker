@@ -4,7 +4,9 @@
 use crate::error::{BunkerError, Result};
 use crate::output::ExitCode;
 use crate::secrets::store::{Secret, SecretStore};
+use security_framework::item::{ItemClass, ItemSearchOptions, Reference, SearchResult};
 use security_framework::os::macos::keychain::SecKeychain;
+use security_framework::os::macos::keychain_item::SecKeychainItem;
 use security_framework::os::macos::passwords::find_generic_password;
 use std::path::PathBuf;
 use zeroize::Zeroizing;
@@ -99,6 +101,27 @@ pub fn login_keychain_path(home: &std::path::Path) -> PathBuf {
     home.join("Library/Keychains/login.keychain-db")
 }
 
+/// The item for `key`, found without reading its value. Reading asks for approval when the item
+/// does not trust bunker (one another program planted), and deleting it needs no value.
+fn find_item(kcs: &[SecKeychain], project: &str, key: &str) -> Result<Option<SecKeychainItem>> {
+    let found = ItemSearchOptions::new()
+        .class(ItemClass::generic_password())
+        .keychains(kcs)
+        .service(&service(project))
+        .account(key)
+        .load_refs(true)
+        .limit(1)
+        .search();
+    match found {
+        Ok(results) => Ok(results.into_iter().find_map(|r| match r {
+            SearchResult::Ref(Reference::KeychainItem(item)) => Some(item),
+            _ => None,
+        })),
+        Err(e) if e.code() == NOT_FOUND => Ok(None),
+        Err(e) => Err(kc_error("find", key, e)),
+    }
+}
+
 impl SecretStore for KeychainStore {
     fn get(&self, project: &str, key: &str) -> Result<Option<Secret>> {
         let kcs = self.keychains()?;
@@ -113,9 +136,7 @@ impl SecretStore for KeychainStore {
     /// another program could pre-create the item trusting itself and read every later value.
     fn set(&self, project: &str, key: &str, value: &[u8]) -> Result<()> {
         let kc = self.keychains()?.remove(0);
-        if let Ok((_, item)) =
-            find_generic_password(Some(std::slice::from_ref(&kc)), &service(project), key)
-        {
+        if let Some(item) = find_item(std::slice::from_ref(&kc), project, key)? {
             item.delete();
         }
         kc.add_generic_password(&service(project), key, value)
@@ -123,13 +144,12 @@ impl SecretStore for KeychainStore {
     }
     fn delete(&self, project: &str, key: &str) -> Result<bool> {
         let kcs = self.keychains()?;
-        match find_generic_password(Some(&kcs), &service(project), key) {
-            Ok((_, item)) => {
+        match find_item(&kcs, project, key)? {
+            Some(item) => {
                 item.delete();
                 Ok(true)
             }
-            Err(e) if e.code() == NOT_FOUND => Ok(false),
-            Err(e) => Err(kc_error("delete", key, e)),
+            None => Ok(false),
         }
     }
 }
@@ -186,6 +206,9 @@ mod tests {
     fn sys_keychain_set_replaces_a_squatted_item() {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("squat.keychain-db");
+        // A prompt fails the call instead of showing a dialog: replacing a squatted item must not
+        // need the squatter's value (reading it is what asks for approval).
+        let _no_prompts = SecKeychain::disable_user_interaction().unwrap();
         let sec = |args: &[&str]| {
             std::process::Command::new("/usr/bin/security")
                 .args(args)
