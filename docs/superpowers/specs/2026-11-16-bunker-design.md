@@ -534,7 +534,7 @@ contains values.
 - The agents run the installed binary by its real path. `up` warns when that path is a build
   artifact under `target/`.
 - The proxy rotates `network.jsonl` and every host log under `~/.bunker` at 10 MiB, keeping five
-  copies (copy, then truncate in place, so launchd's open stdout keeps working). Guest logs rotate
+  copies. Files bunker opens per write (`network.jsonl`, `proxy.log`) rotate by rename, and the newest policy event is carried into the fresh `network.jsonl` so a flood of blocked requests can't erase the policy state; agents' stdout and stderr, which launchd holds open, are copied and truncated in place. Guest logs rotate
   with logrotate.
 - Like old bunker, this needs the maintainer logged in after the Mac reboots. A LaunchDaemon variant
   comes with fallback B.
