@@ -552,8 +552,11 @@ beyond networking (file writes only under the VM dir and logs, process exec only
 services) is plan 2 work, as long as Lima still runs under it.
 
 **Plan 2 hardening (as built, 2026-11-16).** The hostagent profile now also denies file writes except
-under the VM dir, Lima's `_config`, the per-user temp dir, `/dev/null`, `/dev/tty*` and `/dev/ptmx`,
-and denies exec except for `limactl` (the symlink and its Cellar path), `/usr/bin/ssh`,
+under the VM dir, `/dev/null`, `/dev/tty*` and `/dev/ptmx`, and even inside the VM dir it can't
+rewrite `lima.yaml`. Lima's `_config` (which holds `override.yaml` and `default.yaml`) is not
+writable, so a compromised hostagent can't add a mount for its next launchd restart; the mount would
+be served by Virtualization.framework's own process, outside this sandbox. Its TMPDIR is `<vm dir>/tmp`.
+It denies exec except for `limactl` (the symlink and its Cellar path), `/usr/bin/ssh`,
 `/usr/bin/sw_vers`, `/usr/sbin/system_profiler`, `/bin/sh` and `/bin/bash`. The last four were the
 bounded additions Lima 2.3.0 needed to start (`sw_vers` and `system_profiler` for the vz driver,
 `sh`/`bash` for its SSH readiness script); children inherit the exec rule, so the shells can still

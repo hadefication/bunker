@@ -5,21 +5,12 @@ use std::path::Path;
 /// The hostagent's profile: the spike's network rules, plus (plan 2 hardening) writes only under
 /// the VM dir, Lima's `_config`, the per-user temp dir and terminal devices, and exec of `limactl`
 /// and `/usr/bin/ssh` only. Network rules are never widened here.
-pub fn hostagent_profile(
-    lima_vm_dir_real: &Path,
-    ssh_port: u16,
-    limactl: &Path,
-    user_tmp: &Path,
-) -> String {
+pub fn hostagent_profile(lima_vm_dir_real: &Path, ssh_port: u16, limactl: &Path) -> String {
     let dir = sb_string(&lima_vm_dir_real.to_string_lossy());
-    let config = sb_string(
-        &lima_vm_dir_real
-            .parent()
-            .unwrap_or(Path::new("/nonexistent"))
-            .join("_config")
-            .to_string_lossy(),
-    );
-    let tmp = sb_string(user_tmp.to_string_lossy().trim_end_matches('/'));
+    // Lima reads lima.yaml (and _config, which stays unwritable) on every start; a compromised
+    // hostagent must not be able to add mounts for the next launchd restart.
+    let yaml = sb_string(&lima_vm_dir_real.join("lima.yaml").to_string_lossy());
+
     // Seatbelt matches exec against the resolved path; Homebrew's limactl is a symlink into Cellar.
     let real = limactl
         .canonicalize()
@@ -42,14 +33,16 @@ pub fn hostagent_profile(
 (allow network-bind (local tcp \"localhost:{ssh_port}\"))\n\
 (allow network-bind (local unix-socket (subpath {dir})))\n\
 (deny file-write*)\n\
-(allow file-write* (subpath {dir}) (subpath {config}) (subpath {tmp}) (literal \"/dev/null\") (regex #\"^/dev/tty\") (literal \"/dev/ptmx\"))\n\
+(allow file-write* (subpath {dir}) (literal \"/dev/null\") (regex #\"^/dev/tty\") (literal \"/dev/ptmx\"))\n\
+(deny file-write* (literal {yaml}))\n\
 (deny process-exec)\n\
 (allow process-exec {exe} (literal \"/usr/bin/ssh\") (literal \"/usr/bin/sw_vers\") (literal \"/usr/sbin/system_profiler\") (literal \"/bin/sh\") (literal \"/bin/bash\"))\n"
     )
 }
 
-/// `confstr(_CS_DARWIN_USER_TEMP_DIR)`: the per-user `/var/folders/.../T/`, resolved.
-pub fn user_temp_dir() -> std::path::PathBuf {
+/// `confstr(_CS_DARWIN_USER_TEMP_DIR)`: the per-user `/var/folders/.../T/`, resolved. `None`
+/// rather than a guess: a wrong answer would widen the hostagent's writable area.
+pub fn user_temp_dir() -> Option<std::path::PathBuf> {
     let mut buf = vec![0u8; 1024];
     // SAFETY: confstr writes at most buf.len() bytes, NUL-terminated, and returns the needed size.
     let n = unsafe {
@@ -59,13 +52,17 @@ pub fn user_temp_dir() -> std::path::PathBuf {
             buf.len(),
         )
     };
-    let raw = if n > 0 && n <= buf.len() {
-        String::from_utf8_lossy(&buf[..n - 1]).into_owned()
-    } else {
-        std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into())
-    };
-    let p = std::path::PathBuf::from(raw);
-    p.canonicalize().unwrap_or(p)
+    if n == 0 || n > buf.len() {
+        return None;
+    }
+    let p = std::path::PathBuf::from(String::from_utf8_lossy(&buf[..n - 1]).into_owned());
+    p.canonicalize().ok()
+}
+
+/// The hostagent's TMPDIR, `<vm dir>/tmp`: inside the only directory it may write, and unlike
+/// `/var/folders/.../T/` it survives a reboot, when launchd restarts the hostagent on its own.
+pub fn hostagent_tmp(lima_vm_dir_real: &Path) -> std::path::PathBuf {
+    lima_vm_dir_real.join("tmp")
 }
 
 /// The `-R` proxy forward: outbound to the guest's SSH port and the host proxy port only.
@@ -106,8 +103,7 @@ mod tests {
             hostagent_profile(
                 Path::new("/x/.lima/bunker-t"),
                 60100,
-                Path::new("/x/bin/limactl"),
-                Path::new("/var/folders/ab/T/")
+                Path::new("/x/bin/limactl")
             ),
             want
         );
@@ -212,11 +208,15 @@ mod tests {
         let lima = tempfile::tempdir_in(&home).unwrap();
         let vm_dir = lima.path().canonicalize().unwrap().join("bunker-t");
         std::fs::create_dir_all(&vm_dir).unwrap();
-        let tmp = user_temp_dir();
+        let tmp = hostagent_tmp(&vm_dir);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let config_dir = vm_dir.parent().unwrap().join("_config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(vm_dir.join("lima.yaml"), "x").unwrap();
         let probe = home.join("bunker-sbx-probe");
         let _ = std::fs::remove_file(&probe);
         // "limactl" = touch, so only the file rules decide.
-        let p = hostagent_profile(&vm_dir, 60100, Path::new("/usr/bin/touch"), &tmp);
+        let p = hostagent_profile(&vm_dir, 60100, Path::new("/usr/bin/touch"));
         assert!(
             run_under(
                 "(version 1)(allow default)",
@@ -245,17 +245,40 @@ mod tests {
                     tmp.join("bunker-sbx-probe").to_str().unwrap()
                 ]
             ),
-            "temp dir write denied"
+            "private temp dir write denied"
+        );
+        let shared_tmp = user_temp_dir().unwrap().join("bunker-sbx-probe");
+        assert!(
+            !run_under(&p, &["/usr/bin/touch", shared_tmp.to_str().unwrap()]),
+            "shared temp dir write allowed"
+        );
+        assert!(!shared_tmp.exists());
+        assert!(
+            !run_under(
+                &p,
+                &[
+                    "/usr/bin/touch",
+                    config_dir.join("override.yaml").to_str().unwrap()
+                ]
+            ),
+            "Lima _config write allowed"
+        );
+        assert!(
+            !run_under(
+                &p,
+                &["/usr/bin/touch", vm_dir.join("lima.yaml").to_str().unwrap()]
+            ),
+            "lima.yaml write allowed"
         );
         // Exec: only limactl and ssh.
-        let p = hostagent_profile(&vm_dir, 60100, Path::new("/usr/bin/true"), &tmp);
+        let p = hostagent_profile(&vm_dir, 60100, Path::new("/usr/bin/true"));
         assert!(run_under(&p, &["/usr/bin/true"]));
         assert!(
             !run_under(&p, &["/usr/bin/touch", vm_dir.join("x").to_str().unwrap()]),
             "exec of another binary allowed"
         );
         // Networking still denied ("limactl" = curl).
-        let p = hostagent_profile(&vm_dir, 60100, Path::new("/usr/bin/curl"), &tmp);
+        let p = hostagent_profile(&vm_dir, 60100, Path::new("/usr/bin/curl"));
         assert!(
             run_under(
                 "(version 1)(allow default)",
@@ -270,6 +293,5 @@ mod tests {
             ),
             "network allowed"
         );
-        let _ = std::fs::remove_file(tmp.join("bunker-sbx-probe"));
     }
 }

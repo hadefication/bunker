@@ -123,6 +123,11 @@ pub fn agents_for(
             format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", dir.display()),
         );
     }
+    let mut tmp = crate::lima::sandbox::hostagent_tmp(vm_dir)
+        .to_string_lossy()
+        .into_owned();
+    tmp.push('/');
+    env.insert("TMPDIR".to_string(), tmp);
     if let Some(lh) = vm_dir.parent() {
         env.insert("LIMA_HOME".to_string(), lh.to_string_lossy().into_owned());
     }

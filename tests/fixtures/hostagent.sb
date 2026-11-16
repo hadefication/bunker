@@ -8,6 +8,7 @@
 (allow network-bind (local tcp "localhost:60100"))
 (allow network-bind (local unix-socket (subpath "/x/.lima/bunker-t")))
 (deny file-write*)
-(allow file-write* (subpath "/x/.lima/bunker-t") (subpath "/x/.lima/_config") (subpath "/var/folders/ab/T") (literal "/dev/null") (regex #"^/dev/tty") (literal "/dev/ptmx"))
+(allow file-write* (subpath "/x/.lima/bunker-t") (literal "/dev/null") (regex #"^/dev/tty") (literal "/dev/ptmx"))
+(deny file-write* (literal "/x/.lima/bunker-t/lima.yaml"))
 (deny process-exec)
 (allow process-exec (literal "/x/bin/limactl") (literal "/usr/bin/ssh") (literal "/usr/bin/sw_vers") (literal "/usr/sbin/system_profiler") (literal "/bin/sh") (literal "/bin/bash"))
