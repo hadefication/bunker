@@ -656,7 +656,11 @@ The final hostagent profile needed no rules beyond the template:
 ## Publishing
 
 - Same repo, `hadefication/bunker`, released as **v2.0.0**. This is the maintainer's decision.
-- The old v0.1.x code moves to a `v1` branch before v2 lands on `main`.
+- v2 is developed on a `v2` branch cut from the v0.1.5 `main`, so `main` and its releases stay
+  untouched until v2 ships.
+- At release, a `v1` branch is created at the old `main`, then `main` fast-forwards to `v2`. Because
+  `v2` descends from the old `main`, that's a fast-forward, not a merge, and the v0.1.x tags stay on
+  `main`'s history.
 - Old installs that run `self_update` get v2. That's acceptable because nothing runs on old bunker
   now: the old Life OS tunnel is already down.
 - v2 must recognise an old-layout `~/.bunker/<project>/` (a Caddyfile and no `bunker.toml`), for
