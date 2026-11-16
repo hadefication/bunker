@@ -3,7 +3,7 @@
 use crate::error::{BunkerError, Result};
 use crate::output::{ExitCode, Report};
 use crate::paths::{ProjectDir, bunker_home, ensure_private_dir};
-use crate::proxy::own::own_addresses;
+use crate::proxy::own::{OwnCache, own_addresses};
 use crate::proxy::resolve::{SystemConnector, SystemResolver};
 use crate::proxy::server::{ProjectListener, serve as serve_listeners};
 use serde_json::{Value, json};
@@ -97,9 +97,12 @@ pub fn serve() -> Result<ServeReport> {
         .build()
         .map_err(|e| BunkerError::io("cannot start the async runtime", e))?;
     let result = rt.block_on(async {
-        // Read on every request: getifaddrs is cheap, and a cached list goes stale the moment an
-        // interface comes up.
-        let own_fn: Arc<dyn Fn() -> Vec<IpAddr> + Send + Sync> = Arc::new(own_addresses);
+        // Read on every request (getifaddrs is cheap; a cached list goes stale when an interface
+        // comes up), keeping the last good list if a lookup fails.
+        let own = Arc::new(OwnCache::new(own_addresses).ok_or_else(|| {
+            BunkerError::new("own_addresses", ExitCode::Failure, "cannot list this Mac's addresses (getifaddrs failed)")
+        })?);
+        let own_fn: Arc<dyn Fn() -> Vec<IpAddr> + Send + Sync> = Arc::new(move || own.get());
         let shutdown = async {
             let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
             tokio::select! {
