@@ -28,6 +28,9 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
   `templates/` (nginx site, php-fpm pool, worker and scheduler units, nftables, logrotate);
   `provision` runs it as root in the guest inside a Build lease, the DB password on stdin.
   Repo signing keys and Composer are pinned by fingerprint and sha256 in the script.
+- `src/tunnel/`: `cloudflared` (find, create, route, delete named tunnels, always with
+  `--origincert ~/.cloudflared/cert.pem`) and `config` (`cloudflared.yml`). `up` runs it last, only
+  for a confined VM with both `domain` and `tunnel`; `destroy` deletes the tunnel.
 - `src/deploy/`: `source` (the release tar: tracked files minus `.env*`, `--dirty` for the working
   tree), `steps` (the pipeline as data: name, guest user, script, lease), `lock` (flock on
   `deploy.lock`), `run` (`deploy` and `rollback`). Root steps never chmod or chown inside a

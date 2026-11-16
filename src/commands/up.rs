@@ -1,7 +1,7 @@
 //! `bunker up <project>`: create and start the confined VM (phase A: VM, proxy, forwards), then
 //! provision it (phase B: packages, users, nginx, php-fpm, MySQL, units).
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{BunkerError, Result};
 use crate::guest::provision::provision;
 use crate::host::Host;
 use crate::launchd::{Agent, Role, ensure_in, kickstart, label};
@@ -12,10 +12,13 @@ use crate::lima::template::render_lima_yaml;
 use crate::lima::vm::{
     agents_for, instance_status, lima_vm_dir, limactl_version, shell, vm_name, wait_running,
 };
+use crate::output::ExitCode;
 use crate::output::Report;
 use crate::paths::{ProjectDir, ensure_private_dir, write_private};
 use crate::run::Cmd;
 use crate::secrets::store::SecretStore;
+use crate::tunnel::cloudflared::Cloudflared;
+use crate::tunnel::config::render_cloudflared_yml;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{self, Write};
@@ -27,6 +30,8 @@ pub struct UpReport {
     pub vm: String,
     pub created: bool,
     pub provisioned: bool,
+    /// The domain the tunnel serves, when the project has one.
+    pub tunnel: Option<String>,
     pub confinement: String,
     pub warnings: Vec<String>,
 }
@@ -50,13 +55,16 @@ impl Report for UpReport {
                 ""
             }
         )?;
+        if let Some(d) = &self.tunnel {
+            writeln!(w, "  tunnel: https://{d}")?;
+        }
         for x in &self.warnings {
             writeln!(w, "  warning: {x}")?;
         }
         Ok(())
     }
     fn json(&self) -> Value {
-        json!({"project": self.project, "vm": self.vm, "created": self.created, "provisioned": self.provisioned, "confinement": self.confinement, "warnings": self.warnings})
+        json!({"project": self.project, "vm": self.vm, "created": self.created, "provisioned": self.provisioned, "tunnel": self.tunnel, "confinement": self.confinement, "warnings": self.warnings})
     }
     fn exit(&self) -> crate::output::ExitCode {
         if self.confinement == "unconfined" {
@@ -78,7 +86,12 @@ fi
 "#;
 
 /// Phase A (VM, proxy, forwards), then phase B (provisioning) once the VM is confirmed confined.
-pub fn up(h: &Host, store: &dyn SecretStore, project: &str) -> Result<UpReport> {
+pub fn up(
+    h: &Host,
+    store: &dyn SecretStore,
+    project: &str,
+    overwrite_dns: bool,
+) -> Result<UpReport> {
     let pd = ProjectDir::under(&h.home, project);
     let cfg = Config::load(&pd)?;
     limactl_version(h)?;
@@ -151,9 +164,12 @@ pub fn up(h: &Host, store: &dyn SecretStore, project: &str) -> Result<UpReport> 
     h.r.run_ok(&shell(h, &vm).args(["sudo", "sh", "-s"]).stdin(HOSTS_SCRIPT))?;
 
     let confinement = h.probe.confinement(project)?;
+    let mut tunnel = None;
     let provisioned = match &confinement {
         Confinement::Confined { .. } => {
             provision(h, store, &pd, &cfg)?;
+            // Phase C: only a confined, provisioned VM is put on the internet.
+            tunnel = ensure_tunnel(h, &pd, &cfg, overwrite_dns)?;
             true
         }
         Confinement::Unconfined { reason, .. } => {
@@ -170,9 +186,96 @@ pub fn up(h: &Host, store: &dyn SecretStore, project: &str) -> Result<UpReport> 
         vm,
         created,
         provisioned,
+        tunnel,
         confinement: confinement.as_str().to_string(),
         warnings,
     })
+}
+
+/// Phase C, for a project with both `domain` and `tunnel`: find or create the named tunnel, point
+/// the domain at it, write cloudflared.yml and run cloudflared as a LaunchAgent.
+fn ensure_tunnel(
+    h: &Host,
+    pd: &ProjectDir,
+    cfg: &Config,
+    overwrite_dns: bool,
+) -> Result<Option<String>> {
+    let (Some(domain), Some(name)) = (&cfg.domain, &cfg.tunnel) else {
+        return Ok(None);
+    };
+    if !h.cloudflared_cert.exists() {
+        return Err(BunkerError::new(
+            "cloudflared_login_needed",
+            ExitCode::Refused,
+            format!(
+                "{} is missing, so cloudflared can't manage tunnels",
+                h.cloudflared_cert.display()
+            ),
+        )
+        .hint("run cloudflared tunnel login (it opens a browser to pick the zone), then bunker up again"));
+    }
+    let cf = Cloudflared {
+        r: h.r,
+        bin: h.cloudflared.clone(),
+        cert: h.cloudflared_cert.clone(),
+    };
+    let creds = pd.tunnel_credentials();
+    let id = match cf.find(name)? {
+        Some(id) if creds.exists() => id,
+        Some(_) => {
+            return Err(BunkerError::new(
+                "tunnel_credentials_missing",
+                ExitCode::Refused,
+                format!(
+                    "tunnel {name} exists but {} doesn't, so bunker can't run it",
+                    creds.display()
+                ),
+            )
+            .hint(format!(
+                "copy its credentials JSON to {}, or delete it (cloudflared tunnel delete {name}) and run bunker up again",
+                creds.display()
+            )));
+        }
+        None => {
+            cf.create(name, &creds)?;
+            cf.find(name)?.ok_or_else(|| {
+                BunkerError::new(
+                    "cloudflared_failed",
+                    ExitCode::Failure,
+                    format!("created tunnel {name}, but cloudflared doesn't list it"),
+                )
+            })?
+        }
+    };
+    cf.route(&id, domain, overwrite_dns)?;
+    write_private(
+        &pd.cloudflared_yml(),
+        render_cloudflared_yml(&id, &creds, domain, cfg.ports.web).as_bytes(),
+    )?;
+    ensure_in(h.r, &h.agents_dir, &tunnel_agent(h, pd))?;
+    Ok(Some(domain.clone()))
+}
+
+/// `com.bunker.<project>.tunnel`: cloudflared with bunker's config, restarted if it exits.
+pub fn tunnel_agent(h: &Host, pd: &ProjectDir) -> Agent {
+    let logs = pd.logs_dir();
+    Agent {
+        label: label(Some(&pd.name), Role::Tunnel),
+        program_args: vec![
+            h.cloudflared.to_string_lossy().into_owned(),
+            "tunnel".into(),
+            "--no-autoupdate".into(),
+            "--config".into(),
+            pd.cloudflared_yml().to_string_lossy().into_owned(),
+            "run".into(),
+        ],
+        env: BTreeMap::new(),
+        keep_alive: true,
+        run_at_load: true,
+        throttle_secs: Some(5),
+        stdout: logs.join("tunnel.out.log"),
+        stderr: logs.join("tunnel.err.log"),
+    }
 }
 
 /// The shared proxy agent. It binds every project's port at start, so a project it isn't serving
@@ -212,7 +315,20 @@ fn ensure_proxy(h: &Host, port: u16) -> Result<()> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::host::testing::{CONFINED, host, project};
+    use crate::host::testing::{CONFINED, host};
+
+    /// The fixture project without `domain` and `tunnel`, so phase C (cloudflared) stays out.
+    pub fn project(h: &Host, name: &str) -> ProjectDir {
+        let pd = crate::host::testing::project(h, name);
+        let text = std::fs::read_to_string(pd.config()).unwrap();
+        let text: String = text
+            .lines()
+            .filter(|l| !l.starts_with("domain") && !l.starts_with("tunnel"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        std::fs::write(pd.config(), text).unwrap();
+        pd
+    }
     use crate::run::{Cmd, Output, RecordingRunner};
     use crate::secrets::store::MemoryStore;
 
@@ -259,7 +375,7 @@ pub(crate) mod tests {
         let r = scripted("2.2.0", false);
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        let e = up(&h, &MemoryStore::default(), "t").unwrap_err();
+        let e = up(&h, &MemoryStore::default(), "t", false).unwrap_err();
         assert_eq!(
             (e.code, e.exit),
             ("lima_too_old", crate::output::ExitCode::Failure)
@@ -273,7 +389,7 @@ pub(crate) mod tests {
         let r = scripted("2.3.0", false);
         let h = host(&r, &CONFINED, d.path());
         let pd = project(&h, "t");
-        let rep = up(&h, &MemoryStore::default(), "t").unwrap();
+        let rep = up(&h, &MemoryStore::default(), "t", false).unwrap();
         assert_eq!((rep.created, rep.confinement.as_str()), (true, "confined"));
         let calls = r.calls();
         let create = calls
@@ -325,7 +441,7 @@ pub(crate) mod tests {
         let r = scripted("2.3.0", true);
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        assert!(!up(&h, &MemoryStore::default(), "t").unwrap().created);
+        assert!(!up(&h, &MemoryStore::default(), "t", false).unwrap().created);
         assert!(!r.calls().iter().any(
             |c| c.program == "limactl" && c.args.first().map(String::as_str) == Some("create")
         ));
@@ -337,7 +453,7 @@ pub(crate) mod tests {
         let r = scripted("2.3.0", false);
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        up(&h, &MemoryStore::default(), "t").unwrap();
+        up(&h, &MemoryStore::default(), "t", false).unwrap();
         assert!(
             !r.calls()
                 .iter()
@@ -377,7 +493,9 @@ pub(crate) mod tests {
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
         assert_eq!(
-            up(&h, &MemoryStore::default(), "t").unwrap_err().code,
+            up(&h, &MemoryStore::default(), "t", false)
+                .unwrap_err()
+                .code,
             "vm_start_timeout"
         );
     }
@@ -385,9 +503,10 @@ pub(crate) mod tests {
 
 #[cfg(test)]
 mod symlink_tests {
-    use super::tests::scripted;
+    use super::tests::{project, scripted};
     use super::*;
-    use crate::host::testing::{CONFINED, host, project};
+    use crate::host::testing::{CONFINED, host};
+    use crate::run::Output;
     use crate::run::RecordingRunner;
     use crate::secrets::store::MemoryStore;
     use std::os::unix::fs::PermissionsExt;
@@ -404,7 +523,7 @@ mod symlink_tests {
         let vm_dir = h.lima_home.join("bunker-t");
         std::fs::create_dir_all(&vm_dir).unwrap();
         std::os::unix::fs::symlink(&victim, vm_dir.join("tmp")).unwrap();
-        up(&h, &MemoryStore::default(), "t").unwrap();
+        up(&h, &MemoryStore::default(), "t", false).unwrap();
         assert_eq!(
             std::fs::metadata(&victim).unwrap().permissions().mode() & 0o777,
             0o755
@@ -426,7 +545,9 @@ mod symlink_tests {
         std::fs::create_dir_all(&vm_dir).unwrap();
         std::fs::write(vm_dir.join("lima.yaml"), "mounts: [{location: \"~\"}]\n").unwrap();
         assert_eq!(
-            up(&h, &MemoryStore::default(), "t").unwrap_err().code,
+            up(&h, &MemoryStore::default(), "t", false)
+                .unwrap_err()
+                .code,
             "instance_tampered"
         );
         assert!(
@@ -449,7 +570,7 @@ mod symlink_tests {
         let r = scripted("2.3.0", false);
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        let rep = up(&h, &MemoryStore::default(), "t").unwrap();
+        let rep = up(&h, &MemoryStore::default(), "t", false).unwrap();
         assert!(rep.provisioned && provisioned(&r));
         // The probe ran before the provision call, not after.
         let calls = r.calls();
@@ -477,8 +598,110 @@ mod symlink_tests {
         });
         let h = host(&r, &probe, d.path());
         project(&h, "t");
-        let rep = up(&h, &MemoryStore::default(), "t").unwrap();
+        let rep = up(&h, &MemoryStore::default(), "t", false).unwrap();
         assert_eq!(rep.exit(), crate::output::ExitCode::Unconfined);
         assert!(!rep.provisioned && !provisioned(&r));
+    }
+
+    #[test]
+    fn up_without_domain_skips_tunnel() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        up(&h, &MemoryStore::default(), "t", false).unwrap();
+        assert!(!r.calls().iter().any(|c| c.program == "cloudflared"));
+        assert!(!h.agents_dir.join("com.bunker.t.tunnel.plist").exists());
+    }
+
+    /// Answers `cloudflared tunnel ... list` with `lists` in turn, creates the credentials file.
+    fn cloudflared(r: &RecordingRunner, lists: &[&'static str]) {
+        for &l in lists {
+            r.respond_with("cloudflared", &["tunnel"], move |c| {
+                if c.args.iter().any(|a| a == "create") {
+                    let i = c
+                        .args
+                        .iter()
+                        .position(|a| a == "--credentials-file")
+                        .unwrap();
+                    std::fs::write(&c.args[i + 1], "{}").unwrap();
+                }
+                Output::ok(l)
+            });
+        }
+    }
+
+    #[test]
+    fn up_with_domain_creates_routes_and_runs_the_tunnel() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let h = host(&r, &CONFINED, d.path());
+        let pd = crate::host::testing::project(&h, "t");
+        std::fs::write(&h.cloudflared_cert, "x").unwrap();
+        // list (none), create, list (found), route
+        cloudflared(
+            &r,
+            &["[]", "", "[{\"id\":\"6ff4\",\"name\":\"life-os\"}]", ""],
+        );
+        let rep = up(&h, &MemoryStore::default(), "t", false).unwrap();
+        assert!(
+            rep.tunnel.as_deref() == Some("life-os.bangkila.com"),
+            "{rep:?}"
+        );
+        let subs: Vec<String> = r
+            .calls()
+            .iter()
+            .filter(|c| c.program == "cloudflared")
+            .map(|c| c.args[3].clone())
+            .collect();
+        assert_eq!(subs, ["list", "create", "list", "route"]);
+        let yml = std::fs::read_to_string(pd.cloudflared_yml()).unwrap();
+        assert!(yml.contains("tunnel: 6ff4") && yml.contains("hostname: life-os.bangkila.com"));
+        let plist =
+            std::fs::read_to_string(h.agents_dir.join("com.bunker.t.tunnel.plist")).unwrap();
+        for a in [
+            "<string>tunnel</string>",
+            "<string>--no-autoupdate</string>",
+            "<string>run</string>",
+        ] {
+            assert!(plist.contains(a), "{a} missing from\n{plist}");
+        }
+    }
+
+    #[test]
+    fn up_with_domain_needs_cloudflared_login() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let h = host(&r, &CONFINED, d.path());
+        crate::host::testing::project(&h, "t");
+        let e = up(&h, &MemoryStore::default(), "t", false).unwrap_err();
+        assert_eq!(
+            (e.code, e.exit),
+            ("cloudflared_login_needed", crate::output::ExitCode::Refused)
+        );
+        assert!(e.hint.unwrap().contains("cloudflared tunnel login"));
+    }
+
+    #[test]
+    fn existing_tunnel_without_credentials_is_refused() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let h = host(&r, &CONFINED, d.path());
+        crate::host::testing::project(&h, "t");
+        std::fs::write(&h.cloudflared_cert, "x").unwrap();
+        cloudflared(&r, &["[{\"id\":\"6ff4\",\"name\":\"life-os\"}]"]);
+        let e = up(&h, &MemoryStore::default(), "t", false).unwrap_err();
+        assert_eq!(
+            (e.code, e.exit),
+            (
+                "tunnel_credentials_missing",
+                crate::output::ExitCode::Refused
+            )
+        );
+        assert!(
+            !r.calls()
+                .iter()
+                .any(|c| c.program == "cloudflared" && c.args.iter().any(|a| a == "create"))
+        );
     }
 }

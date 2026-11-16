@@ -43,9 +43,14 @@ fn main() {
                 force,
             }),
         ),
-        Command::Up { project } => {
+        Command::Up {
+            project,
+            overwrite_dns,
+        } => {
             let store = bunker::secrets::keychain::KeychainStore::from_env();
-            with_host(format, |h| commands::up::up(h, &store, &project))
+            with_host(format, |h| {
+                commands::up::up(h, &store, &project, overwrite_dns)
+            })
         }
         Command::Start { project } => {
             with_host(format, |h| commands::lifecycle::start(h, &project))

@@ -50,8 +50,14 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Create (first time) and start the project's confined VM, proxy and forwards. Idempotent.
-    Up { project: String },
+    /// Create (first time) and start the project's confined VM, provision it and, with a domain,
+    /// run its Cloudflare tunnel. Idempotent.
+    Up {
+        project: String,
+        /// Replace an existing DNS record for the domain with the tunnel's CNAME.
+        #[arg(long)]
+        overwrite_dns: bool,
+    },
     /// Start a stopped VM and its forwards.
     Start { project: String },
     /// Stop the forwards and the VM. Nothing restarts at login until start or up.

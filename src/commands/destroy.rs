@@ -93,11 +93,45 @@ pub fn destroy(h: &Host, project: &str) -> Result<DestroyReport> {
         let _ = std::fs::remove_file(f);
     }
     let _ = std::fs::remove_dir_all(pd.leases_dir());
+    let mut notes = Vec::new();
+    if let Ok(cfg) = crate::config::Config::load(&pd)
+        && let (Some(domain), Some(name)) = (&cfg.domain, &cfg.tunnel)
+    {
+        remove_tunnel(h, &pd, name, &mut notes);
+        notes.push(format!(
+            "Remove the CNAME for {domain} in the Cloudflare dashboard; cloudflared can't delete DNS records."
+        ));
+    }
     Ok(DestroyReport {
         project: project.to_string(),
         vm,
-        notes: vec![],
+        notes,
     })
+}
+
+/// Stops cloudflared and deletes the tunnel. Best effort: a failure becomes a note to finish by hand.
+fn remove_tunnel(h: &Host, pd: &ProjectDir, name: &str, notes: &mut Vec<String>) {
+    let label = crate::launchd::label(Some(&pd.name), crate::launchd::Role::Tunnel);
+    if let Err(e) = crate::launchd::remove_in(h.r, &h.agents_dir, &label) {
+        notes.push(format!("could not remove {label}: {}", e.message));
+    }
+    let cf = crate::tunnel::cloudflared::Cloudflared {
+        r: h.r,
+        bin: h.cloudflared.clone(),
+        cert: h.cloudflared_cert.clone(),
+    };
+    match cf.find(name).and_then(|id| match id {
+        Some(id) => cf.delete(&id).map(|()| true),
+        None => Ok(false),
+    }) {
+        Ok(true) => notes.push(format!("deleted tunnel {name}")),
+        Ok(false) => {}
+        Err(e) => notes.push(format!(
+            "could not delete tunnel {name} ({}); run cloudflared tunnel delete {name}",
+            e.message
+        )),
+    }
+    let _ = std::fs::remove_file(pd.tunnel_credentials());
 }
 
 #[cfg(test)]
@@ -149,5 +183,33 @@ mod tests {
             crate::lima::vm::check_sealed(&vm_dir).unwrap_err().code,
             "instance_tampered"
         );
+    }
+
+    #[test]
+    fn destroy_prints_cname_to_remove() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let h = host(&r, &CONFINED, d.path());
+        let pd = project(&h, "t");
+        std::fs::write(pd.tunnel_credentials(), "{}").unwrap();
+        std::fs::create_dir_all(&h.agents_dir).unwrap();
+        std::fs::write(h.agents_dir.join("com.bunker.t.tunnel.plist"), "x").unwrap();
+        r.respond(
+            "cloudflared",
+            &["tunnel"],
+            Output::ok("[{\"id\":\"6ff4\",\"name\":\"life-os\"}]"),
+        );
+        let rep = destroy(&h, "t").unwrap();
+        assert!(rep.notes.iter().any(|n| n
+            == "Remove the CNAME for life-os.bangkila.com in the Cloudflare dashboard; cloudflared can't delete DNS records."));
+        let subs: Vec<String> = r
+            .calls()
+            .iter()
+            .filter(|c| c.program == "cloudflared")
+            .map(|c| c.args[3].clone())
+            .collect();
+        assert_eq!(subs, ["list", "cleanup", "delete"]);
+        assert!(!h.agents_dir.join("com.bunker.t.tunnel.plist").exists());
+        assert!(!pd.tunnel_credentials().exists());
     }
 }

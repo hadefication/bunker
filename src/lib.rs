@@ -15,3 +15,4 @@ pub mod proxy;
 pub mod run;
 pub mod secrets;
 pub mod time;
+pub mod tunnel;

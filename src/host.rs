@@ -20,6 +20,10 @@ pub struct Host<'a> {
     pub limactl: PathBuf,
     /// This binary, for the proxy agent.
     pub bunker_exe: PathBuf,
+    /// cloudflared (needed only for a project with a domain), and the account certificate
+    /// `cloudflared tunnel login` writes to `~/.cloudflared/cert.pem`.
+    pub cloudflared: PathBuf,
+    pub cloudflared_cert: PathBuf,
     /// Pause between readiness checks, and how long to wait for a VM.
     pub poll: Duration,
     pub wait_timeout: Duration,
@@ -44,6 +48,10 @@ impl<'a> Host<'a> {
             limactl,
             bunker_exe: std::env::current_exe()
                 .map_err(|e| BunkerError::io("cannot find the bunker binary", e))?,
+            cloudflared: find_in_path("cloudflared").unwrap_or_else(|| "cloudflared".into()),
+            cloudflared_cert: crate::secrets::keychain::user_home()
+                .map(|h| h.join(".cloudflared/cert.pem"))
+                .unwrap_or_default(),
             poll: Duration::from_secs(2),
             wait_timeout: Duration::from_secs(180),
         })
@@ -98,6 +106,8 @@ pub(crate) mod testing {
             lima_home: dir.join("lima"),
             limactl: "limactl".into(),
             bunker_exe: "/usr/local/bin/bunker".into(),
+            cloudflared: "cloudflared".into(),
+            cloudflared_cert: dir.join("cert.pem"),
             poll: Duration::from_millis(1),
             wait_timeout: Duration::from_millis(50),
         }
