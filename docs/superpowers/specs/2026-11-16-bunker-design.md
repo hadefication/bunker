@@ -377,9 +377,13 @@ undo migrations, and says so.
 The master copy of every secret lives in the mini's **macOS Keychain**, one item per project and key.
 The items are created with an access rule that lets only the bunker binary read them without a
 prompt, so any other process, including an agent running `security find-generic-password`, triggers a
-macOS approval prompt. How that rule survives bunker updates, given code signing, is the builder's
-problem to solve. If it can't be made reliable, the items fall back to the plain login Keychain and
-the doc gets updated.
+macOS approval prompt. The rule survives bunker updates because releases are signed with a
+Developer ID: the Keychain trusts the signing identity (the designated requirement), not one build's
+hash. Verified on the mini (plan 2, Task 10): a signed bunker stored an item, `security` was refused
+behind a prompt, and a rebuilt binary with a different CDHash, re-signed with the same identity, read
+the item without one. An unsigned or ad-hoc signed build gets a prompt after every update. bunker
+replaces an item by deleting and re-adding it, and finds it without reading its value, so an item
+another program planted (trusting itself) never keeps its access and never causes a prompt.
 
 There are two kinds of secret:
 
