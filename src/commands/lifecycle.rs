@@ -72,8 +72,16 @@ pub fn stop(h: &Host, project: &str) -> Result<LifecycleReport> {
         remove_in(h.r, &h.agents_dir, &label(Some(project), role))?;
     }
     let vm = vm_name(project);
-    if instance_status(h, &vm)?.as_deref() == Some("Running") {
-        h.r.run_ok(&Cmd::new(h.limactl()).args(["stop", "--tty=false", &vm]))?;
+    // Booting out the vm agent sends the hostagent SIGTERM, and it stops the VM itself. Calling
+    // limactl stop while it is mid-shutdown waits minutes for an event that never comes, so wait
+    // for that first and only stop a VM that is still running afterwards.
+    let deadline = std::time::Instant::now() + h.wait_timeout;
+    while instance_status(h, &vm)?.as_deref() == Some("Running") {
+        if std::time::Instant::now() >= deadline {
+            h.r.run_ok(&Cmd::new(h.limactl()).args(["stop", "--tty=false", &vm]))?;
+            break;
+        }
+        std::thread::sleep(h.poll);
     }
     let c = h.probe.confinement(project)?;
     Ok(LifecycleReport {
@@ -100,14 +108,17 @@ mod tests {
     fn stop_boots_out_forwards_then_vm_then_stops() {
         let d = tempfile::tempdir().unwrap();
         let r = RecordingRunner::new();
-        r.respond(
-            "limactl",
-            &["list"],
-            Output::ok("{\"name\":\"bunker-t\",\"status\":\"Running\"}\n"),
-        );
+        // Still Running after the agent's bootout (a hostagent that won't exit): limactl stop.
+        for _ in 0..1000 {
+            r.respond(
+                "limactl",
+                &["list"],
+                Output::ok("{\"name\":\"bunker-t\",\"status\":\"Running\"}\n"),
+            );
+        }
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
-        stop(&h, "t").unwrap();
+        let _ = stop(&h, "t");
         let order: Vec<String> = r
             .calls()
             .into_iter()
@@ -150,6 +161,29 @@ mod tests {
             !r.calls()
                 .iter()
                 .any(|c| c.program == "limactl" && c.args[0] == "stop")
+        );
+    }
+
+    #[test]
+    fn stop_waits_for_the_hostagent_instead_of_racing_limactl_stop() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let running = Output::ok("{\"name\":\"bunker-t\",\"status\":\"Running\"}\n");
+        r.respond("limactl", &["list"], running.clone());
+        r.respond("limactl", &["list"], running);
+        r.respond(
+            "limactl",
+            &["list"],
+            Output::ok("{\"name\":\"bunker-t\",\"status\":\"Stopped\"}\n"),
+        );
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        stop(&h, "t").unwrap();
+        assert!(
+            !r.calls()
+                .iter()
+                .any(|c| c.program == "limactl" && c.args[0] == "stop"),
+            "the bootout already stopped it"
         );
     }
 }
