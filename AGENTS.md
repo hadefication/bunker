@@ -11,6 +11,8 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
 - `src/output.rs`: human output, the `--json` envelope, exit codes. `src/error.rs`: `BunkerError`.
 - `src/paths.rs`: `bunker_home()`, `ProjectDir`, and `write_private` (0600, atomic) for every file
   bunker writes. `src/config/`: `bunker.toml` types, validation, repo detection, port allocation.
+- `src/net/`: format-preserving `[network]` edits and the `network.jsonl` event log.
+  `src/time.rs`: RFC 3339 timestamps (no date crate).
 - `src/proxy/`: the egress proxy (`addr::is_internal` is shared with config validation).
 - `src/run.rs`: every external program goes through the `Runner` trait. Tests use
   `RecordingRunner` to check exact invocations and `assert_no_secret_in_argv`.

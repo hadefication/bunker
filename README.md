@@ -18,11 +18,22 @@ Every command prints readable output by default. For agents and scripts, add `--
 | Command | What it does |
 | --- | --- |
 | `bunker init <project> --path <repo> [--domain D] [--tunnel T] [--php V] [--force]` | Detect the Laravel app (PHP from composer.json's constraint, extensions, Node, Passport), pick free ports and write a commented `~/.bunker/<project>/bunker.toml` (mode 0600). The tunnel defaults to the project name when `--domain` is given |
+| `bunker net allow <host> [project] [--build]` | Let the running site reach a host (`host`, `*.domain` for subdomains, or a public IP; ports 80 and 443 unless you write `host:port`). `--build` allows it only while a deploy runs. Removes it from `deny` |
+| `bunker net deny <host> [project]` | Block a host even when a wildcard allows it; removes it from `allow` and `build` |
+| `bunker net rm <host> [project]` | Remove a host from all three lists |
+| `bunker net reload [project]` | Validate a hand edit of `bunker.toml`, print what changed since the last policy, and log it |
+| `bunker net log [project] [--blocked] [-n N]` | Recent proxy decisions, policy changes and leases from `network.jsonl` (default 50) |
 | `bunker version`, `--version`, `-V` | Print the version, commit and build date |
 
 Config lives only in `~/.bunker/<project>/bunker.toml` (`BUNKER_HOME` overrides `~/.bunker`),
 never in the repo. Unknown keys and invalid values are errors. Commands that take a project find it
 by name, or from the repo you run them in.
+
+Allowlist edits keep the file's comments and order, refuse internal addresses (exit 4) and any
+result that would not validate, and print a `+`/`-` diff. Every change is appended to
+`~/.bunker/<project>/network.jsonl`. Agents may run `net allow`: the allowlist is a file in your
+home directory either way, so the control is that every change is visible, not that the command is
+locked.
 
 Exit codes: `0` ok · `1` failure or degraded · `2` usage · `3` not found · `4` refused · `5` unconfined VM.
 

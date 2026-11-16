@@ -50,6 +50,47 @@ pub enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Edit and inspect the project's outbound allowlist.
+    Net {
+        #[command(subcommand)]
+        cmd: NetCommand,
+    },
     /// Print the version, commit and build date.
     Version,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NetCommand {
+    /// Let the running site reach HOST (or, with --build, only during deploys). Removes it from deny.
+    Allow {
+        /// host, *.domain or public IP, with an optional :port (80 and 443 otherwise).
+        host: String,
+        /// Project name; defaults to the project whose repo holds the current directory.
+        project: Option<String>,
+        /// Add to [network].build instead: allowed only while a deploy runs.
+        #[arg(long)]
+        build: bool,
+    },
+    /// Block HOST even if a wildcard allows it. Removes it from allow and build.
+    Deny {
+        host: String,
+        project: Option<String>,
+    },
+    /// Remove HOST from allow, build and deny.
+    Rm {
+        host: String,
+        project: Option<String>,
+    },
+    /// Validate a hand edit of bunker.toml, print what changed, and log it.
+    Reload { project: Option<String> },
+    /// Show recent proxy decisions, policy changes and leases.
+    Log {
+        project: Option<String>,
+        /// Only blocked requests.
+        #[arg(long)]
+        blocked: bool,
+        /// How many events.
+        #[arg(short = 'n', default_value_t = 50)]
+        n: usize,
+    },
 }

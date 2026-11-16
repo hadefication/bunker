@@ -110,7 +110,11 @@ pub fn validate_host_pattern(p: &str) -> Result<()> {
     let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if crate::proxy::addr::is_internal(ip, &[]) {
-            return Err(bad("internal addresses can never be allowed"));
+            return Err(BunkerError::new(
+                "host_internal",
+                crate::output::ExitCode::Refused,
+                format!("{p:?} is an internal address; the proxy never lets a VM reach one"),
+            ));
         }
         return Ok(());
     }
@@ -212,7 +216,12 @@ mod tests {
             "-x.example.com",
         ] {
             let e = validate_host_pattern(bad).expect_err(bad);
-            assert_eq!(e.code, "invalid_value", "{bad}");
+            let want = if bad.starts_with("10.") || bad.starts_with("127.") {
+                "host_internal"
+            } else {
+                "invalid_value"
+            };
+            assert_eq!(e.code, want, "{bad}");
         }
     }
 

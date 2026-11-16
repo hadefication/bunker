@@ -1,5 +1,6 @@
-use bunker::cli::{Cli, Command};
+use bunker::cli::{Cli, Command, NetCommand};
 use bunker::commands;
+use bunker::commands::net::NetArgs;
 use bunker::error::Result;
 use bunker::output::{self, ExitCode, Format, Report};
 use clap::Parser;
@@ -37,6 +38,32 @@ fn main() {
                 tunnel,
                 php,
                 force,
+            }),
+        ),
+        Command::Net { cmd } => finish(
+            format,
+            commands::net::run(match cmd {
+                NetCommand::Allow {
+                    host,
+                    project,
+                    build,
+                } => NetArgs::Allow {
+                    host,
+                    project,
+                    build,
+                },
+                NetCommand::Deny { host, project } => NetArgs::Deny { host, project },
+                NetCommand::Rm { host, project } => NetArgs::Rm { host, project },
+                NetCommand::Reload { project } => NetArgs::Reload { project },
+                NetCommand::Log {
+                    project,
+                    blocked,
+                    n,
+                } => NetArgs::Log {
+                    project,
+                    blocked,
+                    n,
+                },
             }),
         ),
     };

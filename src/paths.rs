@@ -80,13 +80,18 @@ pub fn ensure_private_dir(dir: &Path) -> Result<()> {
 
 /// Writes `bytes` to `path` with mode 0600: a temp file in the same directory, then a rename.
 pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic(path, bytes, 0o600)
+}
+
+/// Writes `contents` to `path` with `mode`: a temp file in the same directory, then a rename, so a
+/// reader (the proxy) never sees a half-written file.
+pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let io = |e| BunkerError::io(format!("cannot write {}", path.display()), e);
     let write = || -> std::io::Result<()> {
         let mut f = fs::OpenOptions::new()
             .write(true)
@@ -94,13 +99,15 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
             .truncate(true)
             .mode(0o600)
             .open(&tmp)?;
-        f.write_all(bytes)?;
+        // Exact mode regardless of umask; never wider than asked while the file is being written.
+        f.set_permissions(fs::Permissions::from_mode(mode))?;
+        f.write_all(contents)?;
         f.sync_all()?;
         fs::rename(&tmp, path)
     };
     write().map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        io(e)
+        BunkerError::io(format!("cannot write {}", path.display()), e)
     })
 }
 
@@ -123,6 +130,26 @@ mod tests {
             fs::read_dir(d.path()).unwrap().count(),
             1,
             "no temp file left"
+        );
+    }
+
+    #[test]
+    fn write_atomic_keeps_mode_0600() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("bunker.toml");
+        fs::write(&p, "old").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+        write_atomic(&p, b"new", 0o600).unwrap();
+        assert_eq!(
+            fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read_to_string(&p).unwrap(), "new");
+        write_atomic(&p, b"x", 0o664).unwrap();
+        assert_eq!(
+            fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o664,
+            "umask must not apply"
         );
     }
 }
