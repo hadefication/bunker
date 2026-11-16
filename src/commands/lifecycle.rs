@@ -57,6 +57,7 @@ pub fn start(h: &Host, project: &str) -> Result<LifecycleReport> {
     wait_running(h, &vm)?;
     ensure_in(h.r, &h.agents_dir, &fwd_proxy)?;
     ensure_in(h.r, &h.agents_dir, &fwd_web)?;
+    crate::lima::vm::wait_guest_ready(h, &vm)?;
     let c = h.probe.confinement(project)?;
     crate::commands::up::sync_tunnel(h, &pd, &cfg, &c)?;
     Ok(LifecycleReport {

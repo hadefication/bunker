@@ -255,6 +255,36 @@ pub fn wait_running(h: &Host, vm: &str) -> Result<()> {
 /// its own. The hostagent may write the rest of the VM dir, so the file is made user-immutable:
 /// macOS then refuses writes, renames and hard links to it (a path-only deny could be bypassed by
 /// linking it from the writable dir). A file with extra links is never sealed.
+/// Waits until the guest has finished booting: cloud-init's final stage, where Lima's boot scripts
+/// run and cut any SSH session open at the time, and then the proxy forward (`-R 3128`), which
+/// that cut takes down until launchd restarts it. bunker's sandboxed `limactl start --foreground`
+/// returns before Lima's own readiness wait, so nothing may run in the guest before this.
+pub fn wait_guest_ready(h: &Host, vm: &str) -> Result<()> {
+    const SCRIPT: &str = "cloud-init status --wait >/dev/null 2>&1; s=$?\n\
+[ \"$s\" -eq 0 ] || [ \"$s\" -eq 2 ] || { echo \"cloud-init status exited $s\" >&2; exit 1; }\n\
+for _ in $(seq 1 60); do (exec 3<>/dev/tcp/127.0.0.1/3128) 2>/dev/null && exit 0; sleep 1; done\n\
+echo 'the proxy forward did not come up' >&2; exit 1\n";
+    let deadline = std::time::Instant::now() + h.wait_timeout;
+    loop {
+        let out = h.r.run(
+            &shell(h, vm)
+                .args(["sudo", "bash", "-s"])
+                .stdin(SCRIPT.as_bytes().to_vec()),
+        )?;
+        if out.success() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(BunkerError::new(
+                "guest_not_ready",
+                ExitCode::Failure,
+                format!("{vm} did not finish booting: {}", out.stderr_str().trim()),
+            ));
+        }
+        std::thread::sleep(h.poll);
+    }
+}
+
 pub fn seal_instance_yaml(vm_dir: &Path) -> Result<()> {
     set_immutable(vm_dir, true)
 }

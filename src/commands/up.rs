@@ -161,6 +161,7 @@ pub fn up(
     wait_running(h, &vm)?;
     ensure_in(h.r, &h.agents_dir, &fwd_proxy)?;
     ensure_in(h.r, &h.agents_dir, &fwd_web)?;
+    crate::lima::vm::wait_guest_ready(h, &vm)?;
     h.r.run_ok(&shell(h, &vm).args(["sudo", "sh", "-s"]).stdin(HOSTS_SCRIPT))?;
 
     if h.bunker_exe.components().any(|c| c.as_os_str() == "target") {
@@ -604,8 +605,8 @@ mod symlink_tests {
     fn provisioned(r: &RecordingRunner) -> bool {
         r.calls().iter().any(|c| {
             c.program == "limactl"
-                && c.args
-                    .ends_with(&["sudo".into(), "bash".into(), "-s".into()])
+                && String::from_utf8_lossy(c.stdin.as_deref().unwrap_or_default())
+                    .contains("bunker_provision")
         })
     }
 
@@ -626,8 +627,8 @@ mod symlink_tests {
         let prov = calls
             .iter()
             .position(|c| {
-                c.args
-                    .ends_with(&["sudo".into(), "bash".into(), "-s".into()])
+                String::from_utf8_lossy(c.stdin.as_deref().unwrap_or_default())
+                    .contains("bunker_provision")
             })
             .unwrap();
         assert!(hosts < prov);
@@ -916,5 +917,62 @@ mod symlink_tests {
             d.path(),
         );
         assert_eq!(tunnel_gate(&h, "t").unwrap_err().code, "tunnel_held");
+    }
+
+    #[test]
+    fn up_waits_for_limas_boot_scripts_before_provisioning() {
+        // Lima's boot scripts run in cloud-init's final stage and cut existing SSH sessions; a
+        // session cut while waiting (exit 255) is retried.
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let is_wait = |c: &crate::run::Cmd| {
+            String::from_utf8_lossy(c.stdin.as_deref().unwrap_or_default())
+                .contains("cloud-init status --wait")
+        };
+        let cut = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        for _ in 0..20 {
+            let cut = cut.clone();
+            r.respond_with("limactl", &["shell"], move |c| {
+                if is_wait(c) && cut.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    Output::fail(255, "Connection to 127.0.0.1 closed by remote host.")
+                } else {
+                    Output::ok("")
+                }
+            });
+        }
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        up(&h, &MemoryStore::default(), "t", false).unwrap();
+        let calls = r.calls();
+        let waits: Vec<usize> = calls
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| is_wait(c))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            waits.len(),
+            2,
+            "retried once after the cut session: {:#?}",
+            calls.iter().map(|c| c.args.join(" ")).collect::<Vec<_>>()
+        );
+        let prov = calls
+            .iter()
+            .position(|c| {
+                c.args
+                    .ends_with(&["sudo".into(), "bash".into(), "-s".into()])
+                    && !is_wait(c)
+            })
+            .unwrap();
+        assert!(
+            waits[1] < prov,
+            "provisioning starts only after the guest is ready"
+        );
+        let script =
+            String::from_utf8_lossy(calls[waits[0]].stdin.as_deref().unwrap()).into_owned();
+        assert!(
+            script.contains("/dev/tcp/127.0.0.1/3128"),
+            "waits for the proxy forward too"
+        );
     }
 }
