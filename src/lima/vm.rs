@@ -12,6 +12,9 @@ use std::time::Instant;
 
 pub const MIN_LIMA: (u32, u32, u32) = (2, 3, 0);
 
+/// The guest login user, pinned in the template so the forwards needn't read Lima's ssh.config.
+pub const GUEST_USER: &str = "bunker";
+
 pub fn vm_name(project: &str) -> String {
     format!("bunker-{project}")
 }
@@ -148,9 +151,34 @@ pub fn agents_for(
             "-f".into(),
             s(&profile),
             "/usr/bin/ssh".into(),
+            // Never Lima's ssh.config: the hostagent rewrites it on every start, and a planted
+            // ProxyCommand would run here, outside the hostagent's file and exec rules. Every
+            // setting is explicit; the key is in _config, which the hostagent can't write. The
+            // host key isn't pinned: the far end is the hostagent's own forwarder either way.
             "-F".into(),
-            s(&vm_dir.join("ssh.config")),
+            "/dev/null".into(),
         ];
+        let explicit = [
+            "ProxyCommand=none".to_string(),
+            "HostName=127.0.0.1".into(),
+            format!("Port={}", cfg.ports.ssh),
+            format!("User={GUEST_USER}"),
+            format!(
+                "IdentityFile={}",
+                s(&vm_dir
+                    .parent()
+                    .unwrap_or(Path::new("/"))
+                    .join("_config/user"))
+            ),
+            "IdentitiesOnly=yes".into(),
+            "UserKnownHostsFile=/dev/null".into(),
+            "StrictHostKeyChecking=no".into(),
+            "BatchMode=yes".into(),
+        ];
+        for o in explicit {
+            v.push("-o".into());
+            v.push(o);
+        }
         for o in [
             "ControlMaster=no",
             "ControlPath=none",
@@ -328,7 +356,25 @@ mod tests {
                 profile,
                 "/usr/bin/ssh",
                 "-F",
-                "/l/bunker-t/ssh.config",
+                "/dev/null",
+                "-o",
+                "ProxyCommand=none",
+                "-o",
+                "HostName=127.0.0.1",
+                "-o",
+                "Port=60100",
+                "-o",
+                "User=bunker",
+                "-o",
+                "IdentityFile=/l/_config/user",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "BatchMode=yes",
                 "-o",
                 "ControlMaster=no",
                 "-o",

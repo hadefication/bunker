@@ -20,6 +20,8 @@ cpus: {cpus}
 memory: {memory}
 disk: {disk}
 mounts: []
+user:
+  name: bunker
 ssh:
   localPort: {ssh}
   forwardAgent: false
@@ -71,6 +73,7 @@ mod tests {
             "memory: \"2GiB\"",
             "disk: \"20GiB\"",
             "mounts: []",
+            "user:\n  name: bunker",
             "  localPort: 60100",
             "  forwardAgent: false",
             "  system: false",
