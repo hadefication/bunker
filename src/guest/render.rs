@@ -355,6 +355,24 @@ mod tests {
     }
 
     #[test]
+    fn root_never_chowns_through_paths_users_control() {
+        // app owns shared/storage and deploy owns /home/deploy: anything under them may be a
+        // symlink they planted, so root neither chowns nor writes there.
+        let s = render_provision(&cfg());
+        assert!(
+            !s.contains("-o app -g app \"/srv/app/shared/$d\""),
+            "root chown under storage"
+        );
+        assert!(s.contains("runuser -u app -- mkdir -p"));
+        assert!(
+            !s.contains("put /home/deploy/"),
+            "root write into deploy's home"
+        );
+        assert!(s.contains("runuser -u deploy --"));
+        assert!(s.contains("[ -L /srv/app/shared/storage ]"));
+    }
+
+    #[test]
     fn provision_turns_off_background_fetches() {
         let s = render_provision(&cfg());
         assert!(

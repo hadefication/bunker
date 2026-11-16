@@ -109,14 +109,18 @@ id app >/dev/null 2>&1 || useradd --system --user-group --home-dir /nonexistent 
 id deploy >/dev/null 2>&1 || useradd --user-group --create-home --shell /bin/bash deploy
 install -d -m 0755 -o root -g root /srv/app /srv/app/shared
 install -d -m 0755 -o deploy -g deploy /srv/app/releases
-for d in storage storage/app storage/app/public storage/framework storage/framework/cache \
-  storage/framework/sessions storage/framework/views storage/logs; do
-  install -d -m 0755 -o app -g app "/srv/app/shared/$d"
-done
-put /home/deploy/.npmrc 0644 deploy:deploy <<'BUNKER_EOF' || true
-proxy=http://127.0.0.1:3128
-https-proxy=http://127.0.0.1:3128
-BUNKER_EOF
+# Root touches nothing below a directory app or deploy owns: either may have planted a symlink there.
+# shared/ is root's, so app can't swap the storage entry itself; refuse one that isn't a directory.
+if [ -L /srv/app/shared/storage ]; then
+  echo "bunker: /srv/app/shared/storage is a symlink; refusing to continue" >&2
+  exit 1
+fi
+[ -d /srv/app/shared/storage ] || install -d -m 0755 -o app -g app /srv/app/shared/storage
+runuser -u app -- mkdir -p /srv/app/shared/storage/app/public /srv/app/shared/storage/framework/cache \
+  /srv/app/shared/storage/framework/sessions /srv/app/shared/storage/framework/views \
+  /srv/app/shared/storage/logs
+printf 'proxy=http://127.0.0.1:3128\nhttps-proxy=http://127.0.0.1:3128\n' |
+  runuser -u deploy -- tee /home/deploy/.npmrc >/dev/null
 # Composer has no proxy setting of its own; it reads HTTP(S)_PROXY from /etc/environment above.
 
 echo "== 6. package repositories"
