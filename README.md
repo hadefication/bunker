@@ -17,7 +17,12 @@ Every command prints readable output by default. For agents and scripts, add `--
 
 | Command | What it does |
 | --- | --- |
+| `bunker init <project> --path <repo> [--domain D] [--tunnel T] [--php V] [--force]` | Detect the Laravel app (PHP from composer.json's constraint, extensions, Node, Passport), pick free ports and write a commented `~/.bunker/<project>/bunker.toml` (mode 0600). The tunnel defaults to the project name when `--domain` is given |
 | `bunker version`, `--version`, `-V` | Print the version, commit and build date |
+
+Config lives only in `~/.bunker/<project>/bunker.toml` (`BUNKER_HOME` overrides `~/.bunker`),
+never in the repo. Unknown keys and invalid values are errors. Commands that take a project find it
+by name, or from the repo you run them in.
 
 Exit codes: `0` ok · `1` failure or degraded · `2` usage · `3` not found · `4` refused · `5` unconfined VM.
 

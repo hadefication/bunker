@@ -9,6 +9,9 @@ Bunker v2 is being built on the `v2` branch from the plan in
 A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`).
 - `src/cli.rs`: clap definitions. `src/commands/`: one file per command, thin.
 - `src/output.rs`: human output, the `--json` envelope, exit codes. `src/error.rs`: `BunkerError`.
+- `src/paths.rs`: `bunker_home()`, `ProjectDir`, and `write_private` (0600, atomic) for every file
+  bunker writes. `src/config/`: `bunker.toml` types, validation, repo detection, port allocation.
+- `src/proxy/`: the egress proxy (`addr::is_internal` is shared with config validation).
 - `src/run.rs`: every external program goes through the `Runner` trait. Tests use
   `RecordingRunner` to check exact invocations and `assert_no_secret_in_argv`.
 - `tests/`: integration tests (`assert_cmd`).

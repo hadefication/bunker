@@ -1,6 +1,7 @@
 use bunker::cli::{Cli, Command};
 use bunker::commands;
-use bunker::output::{self, ExitCode, Format};
+use bunker::error::Result;
+use bunker::output::{self, ExitCode, Format, Report};
 use clap::Parser;
 
 fn main() {
@@ -20,6 +21,31 @@ fn main() {
     };
     let code = match cli.command {
         Command::Version => output::emit(format, &commands::version::VersionReport),
+        Command::Init {
+            project,
+            path,
+            domain,
+            tunnel,
+            php,
+            force,
+        } => finish(
+            format,
+            commands::init::run(commands::init::InitArgs {
+                project,
+                path,
+                domain,
+                tunnel,
+                php,
+                force,
+            }),
+        ),
     };
     std::process::exit(code as i32);
+}
+
+fn finish<R: Report>(format: Format, result: Result<R>) -> ExitCode {
+    match result {
+        Ok(r) => output::emit(format, &r),
+        Err(e) => output::emit_error(format, &e),
+    }
 }
