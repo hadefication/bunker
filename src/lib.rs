@@ -4,6 +4,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod launchd;
+pub mod lima;
 pub mod net;
 pub mod output;
 pub mod paths;

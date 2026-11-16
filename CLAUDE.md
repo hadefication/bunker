@@ -18,6 +18,9 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
   (`Resolver`/`Connector` traits so tests prove it connects only to checked addresses), `server`
   (hyper 1, one listener per project), `own` (the Mac's addresses via getifaddrs).
   `bunker proxy serve` is hidden; launchd runs it as `com.bunker.proxy`.
+- `src/lima/`: the Lima template (containment settings fixed), the Seatbelt profiles for the
+  hostagent and both SSH forwards, and the Ubuntu image bunker downloads and verifies itself
+  (a sandboxed `limactl start` has no network). Images live in `~/.bunker/images/`.
 - `src/launchd.rs`: labels, plist rendering, install/remove/kickstart/status via `launchctl` in
   `gui/<uid>`. `BUNKER_LAUNCH_AGENTS_DIR` overrides `~/Library/LaunchAgents`.
 - `src/run.rs`: every external program goes through the `Runner` trait. Tests use
