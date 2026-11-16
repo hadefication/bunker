@@ -68,21 +68,52 @@ impl ProjectDir {
 }
 
 /// Creates `dir` (and parents) with mode 0700, and tightens it to 0700 if it already exists.
-/// Refuses a symlink at `dir` itself: chmod'ing through one would change some other directory.
+/// Creates `dir` (and parents) and makes it 0700, working through a descriptor opened with
+/// `O_NOFOLLOW|O_DIRECTORY`: a symlink at `dir` itself is refused, and nothing can swap one in
+/// between the check and the chmod.
 pub fn ensure_private_dir(dir: &Path) -> Result<()> {
-    if fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(BunkerError::new(
+    use std::os::unix::fs::MetadataExt;
+    let refused = |why: &str| {
+        BunkerError::new(
             "symlink_refused",
             crate::output::ExitCode::Refused,
-            format!("{} is a symlink; bunker won't follow it", dir.display()),
-        ));
+            format!("{}: {why}; bunker won't follow it", dir.display()),
+        )
+    };
+    if let Some(parent) = dir.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(|e| BunkerError::io(format!("cannot create {}", parent.display()), e))?;
     }
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .map_err(|e| BunkerError::io(format!("cannot create {}", dir.display()), e))?;
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+    match fs::DirBuilder::new().mode(0o700).create(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => {
+            return Err(BunkerError::io(
+                format!("cannot create {}", dir.display()),
+                e,
+            ));
+        }
+    }
+    let f = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(dir)
+        .map_err(|e| match e.raw_os_error() {
+            Some(libc::ELOOP) => refused("it is a symlink"),
+            Some(libc::ENOTDIR) => refused("it is not a directory"),
+            _ => BunkerError::io(format!("cannot open {}", dir.display()), e),
+        })?;
+    let m = f
+        .metadata()
+        .map_err(|e| BunkerError::io(format!("cannot stat {}", dir.display()), e))?;
+    // SAFETY: getuid has no preconditions.
+    if !m.is_dir() || m.uid() != unsafe { libc::getuid() } {
+        return Err(refused("it is not a directory this user owns"));
+    }
+    f.set_permissions(fs::Permissions::from_mode(0o700))
         .map_err(|e| BunkerError::io(format!("cannot chmod {}", dir.display()), e))
 }
 
@@ -176,6 +207,28 @@ mod tests {
         assert_eq!(
             fs::metadata(&victim).unwrap().permissions().mode() & 0o777,
             0o755
+        );
+    }
+
+    #[test]
+    fn ensure_private_dir_tightens_through_the_descriptor() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("a/b");
+        ensure_private_dir(&dir).unwrap();
+        assert_eq!(
+            fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        ensure_private_dir(&dir).unwrap();
+        assert_eq!(
+            fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        fs::write(d.path().join("file"), "x").unwrap();
+        assert!(
+            ensure_private_dir(&d.path().join("file")).is_err(),
+            "a file is not a directory"
         );
     }
 }

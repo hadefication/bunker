@@ -110,7 +110,13 @@ pub fn up(h: &Host, project: &str) -> Result<UpReport> {
         })?;
     }
     ensure_private_dir(&ha_tmp)?;
-    crate::lima::vm::seal_instance_yaml(&vm_dir)?;
+    // Seal only what bunker just created. An existing instance must already be sealed: sealing an
+    // unsealed one would bless whatever is in it now.
+    if created {
+        crate::lima::vm::seal_instance_yaml(&vm_dir)?;
+    } else {
+        crate::lima::vm::check_sealed(&vm_dir)?;
+    }
     write_private(
         &pd.sandbox_sb(),
         hostagent_profile(&vm_dir, cfg.ports.ssh, &h.limactl).as_bytes(),
@@ -377,6 +383,22 @@ mod symlink_tests {
             std::fs::symlink_metadata(vm_dir.join("tmp"))
                 .unwrap()
                 .is_dir()
+        );
+    }
+
+    #[test]
+    fn existing_unsealed_instance_is_refused_not_sealed() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", true);
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        let vm_dir = h.lima_home.join("bunker-t");
+        std::fs::create_dir_all(&vm_dir).unwrap();
+        std::fs::write(vm_dir.join("lima.yaml"), "mounts: [{location: \"~\"}]\n").unwrap();
+        assert_eq!(up(&h, "t").unwrap_err().code, "instance_tampered");
+        assert!(
+            crate::lima::vm::check_sealed(&vm_dir).is_err(),
+            "never blessed"
         );
     }
 }

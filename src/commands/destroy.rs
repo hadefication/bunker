@@ -77,8 +77,15 @@ pub fn destroy(h: &Host, project: &str) -> Result<DestroyReport> {
     crate::commands::lifecycle::stop(h, project)?;
     let vm = vm_name(project);
     if instance_status(h, &vm)?.is_some() {
-        crate::lima::vm::unseal_instance_yaml(&crate::lima::vm::lima_vm_dir(&h.lima_home, &vm)?)?;
-        h.r.run_ok(&Cmd::new(h.limactl()).args(["delete", "--force", "--tty=false", &vm]))?;
+        let vm_dir = crate::lima::vm::lima_vm_dir(&h.lima_home, &vm)?;
+        crate::lima::vm::unseal_instance_yaml(&vm_dir)?;
+        if let Err(e) =
+            h.r.run_ok(&Cmd::new(h.limactl()).args(["delete", "--force", "--tty=false", &vm]))
+        {
+            // Don't leave a half-deleted instance with its config writable.
+            let _ = crate::lima::vm::seal_instance_yaml(&vm_dir);
+            return Err(e);
+        }
     }
     for f in [
         pd.lima_yaml(),
