@@ -17,7 +17,11 @@ pub fn generate_missing(
     r: &dyn Runner,
 ) -> Result<Vec<String>> {
     let mut made = Vec::new();
-    let have = |k: &str| -> Result<bool> { Ok(store.get(&pd.name, k)?.is_some()) };
+    // Only items bunker recorded count: an item another program planted under bunker's name
+    // could carry a value (and an access rule) that program knows. Replacing it is safe.
+    let have = |k: &str| -> Result<bool> {
+        Ok(cfg.secrets.contains_key(k) && store.get(&pd.name, k)?.is_some())
+    };
     let mut values: Vec<(&str, Zeroizing<Vec<u8>>)> = Vec::new();
     if !have("APP_KEY")? {
         values.push((
@@ -113,6 +117,7 @@ pub fn base64(b: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SecretKind;
     use crate::run::{Cmd, Output, RecordingRunner};
     use crate::secrets::store::MemoryStore;
 
@@ -180,9 +185,15 @@ mod tests {
 
     #[test]
     fn generate_creates_only_missing() {
-        let (_h, pd, cfg) = setup();
+        let (_h, pd, _) = setup();
         let store = MemoryStore::default();
         store.set("p", "APP_KEY", b"base64:existing").unwrap();
+        let cfg = crate::secrets::meta::record(
+            &pd,
+            "APP_KEY",
+            crate::secrets::meta::Entry::Secret(SecretKind::InApp),
+        )
+        .unwrap();
         let made = generate_missing(&pd, &cfg, false, &store, &RecordingRunner::new()).unwrap();
         assert_eq!(made, ["DB_PASSWORD"]);
         assert_eq!(
@@ -230,6 +241,21 @@ mod tests {
                 .unwrap()
                 .as_slice(),
             PEM.as_bytes()
+        );
+    }
+
+    #[test]
+    fn unrecorded_item_is_not_trusted_and_gets_replaced() {
+        let (_h, pd, cfg) = setup();
+        let store = MemoryStore::default();
+        store
+            .set("p", "APP_KEY", b"base64:planted-by-someone-else")
+            .unwrap();
+        let made = generate_missing(&pd, &cfg, false, &store, &RecordingRunner::new()).unwrap();
+        assert!(made.contains(&"APP_KEY".to_string()), "{made:?}");
+        assert_ne!(
+            store.get("p", "APP_KEY").unwrap().unwrap().as_slice(),
+            b"base64:planted-by-someone-else"
         );
     }
 }
