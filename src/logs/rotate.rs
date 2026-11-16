@@ -1,6 +1,6 @@
 //! Host-side log rotation, run by the proxy's housekeeping tick: network.jsonl and every `*.log`
 //! under `~/.bunker/logs` and `~/.bunker/<project>/logs`, at 10 MiB, keeping five copies.
-use crate::net::log::{EventKind, append_event, read_events};
+use crate::net::log::policy_state_path;
 use std::path::{Path, PathBuf};
 
 pub const MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -48,22 +48,21 @@ pub fn rotate(path: &Path, max: u64, keep: u32, mode: Mode) -> std::io::Result<b
     Ok(true)
 }
 
-/// Rotates a project's network.jsonl and carries its newest policy event (Policy or PolicyError)
-/// into the fresh file, so status and `net log` don't lose the policy state to a flood of
-/// decisions.
-fn rotate_network_log(path: &Path) {
-    let newest = read_events(path).ok().and_then(|evs| {
-        evs.into_iter().rev().find(|e| {
-            matches!(
-                e.kind,
-                EventKind::Policy { .. } | EventKind::PolicyError { .. }
-            )
-        })
-    });
+/// Rotates a project's network.jsonl once it reaches the limit and carries the newest policy event
+/// (from `policy-state.json`, never by reading the log) into the fresh file, so status and
+/// `net log` don't lose the policy state to a flood of decisions.
+pub fn rotate_network_log(path: &Path) {
     if rotate(path, MAX_BYTES, KEEP, Mode::Rename).unwrap_or(false)
-        && let Some(e) = newest
+        && let Ok(line) = std::fs::read(policy_state_path(path))
     {
-        let _ = append_event(path, &e);
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let _ = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .mode(0o600)
+            .open(path)
+            .and_then(|mut f| f.write_all(&line));
     }
 }
 
@@ -184,6 +183,30 @@ mod tests {
             ),
             "the newest policy state is carried into the fresh file: {events:?}"
         );
+    }
+
+    #[test]
+    fn a_flood_rotates_on_append_without_waiting_for_the_tick() {
+        use crate::net::log::{EventKind, NetEvent, append_event};
+        let d = tempfile::tempdir().unwrap();
+        let log = d.path().join("network.jsonl");
+        std::fs::write(&log, vec![b'\n'; MAX_BYTES as usize]).unwrap();
+        let ev = NetEvent::now(
+            "t",
+            EventKind::Decision {
+                host: "x.example".into(),
+                port: 443,
+                phase: "run".into(),
+                verdict: "block".into(),
+                reason: "not_listed".into(),
+            },
+        );
+        append_event(&log, &ev).unwrap();
+        assert!(
+            d.path().join("network.jsonl.1").exists(),
+            "rotated on the append that crossed the limit"
+        );
+        assert!(std::fs::metadata(&log).map(|m| m.len()).unwrap_or(0) < 4096);
     }
 
     #[test]

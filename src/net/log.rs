@@ -51,17 +51,38 @@ impl NetEvent {
     }
 }
 
+/// Where the newest policy event is also kept, beside `network.jsonl`, so rotation can carry it
+/// forward without reading the log.
+pub fn policy_state_path(log: &Path) -> std::path::PathBuf {
+    log.with_file_name("policy-state.json")
+}
+
 /// Appends one line with `O_APPEND`, so concurrent writers (proxy, CLI) never interleave a line.
+/// A policy event is also written to `policy-state.json`. Crossing 10 MiB rotates the log right
+/// away: a guest flooding blocked requests can't grow it between the proxy's housekeeping ticks.
 pub fn append_event(path: &Path, e: &NetEvent) -> Result<()> {
     let mut line = serde_json::to_vec(e).expect("events serialize");
     line.push(b'\n');
-    std::fs::OpenOptions::new()
+    let len = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
         .mode(0o600)
         .open(path)
-        .and_then(|mut f| f.write_all(&line))
-        .map_err(|err| BunkerError::io(format!("cannot append to {}", path.display()), err))
+        .and_then(|mut f| {
+            f.write_all(&line)?;
+            f.metadata().map(|m| m.len())
+        })
+        .map_err(|err| BunkerError::io(format!("cannot append to {}", path.display()), err))?;
+    if matches!(
+        e.kind,
+        EventKind::Policy { .. } | EventKind::PolicyError { .. }
+    ) {
+        crate::paths::write_private(&policy_state_path(path), &line)?;
+    }
+    if len >= crate::logs::rotate::MAX_BYTES {
+        crate::logs::rotate::rotate_network_log(path);
+    }
+    Ok(())
 }
 
 /// The newest `policy` event, if any.
