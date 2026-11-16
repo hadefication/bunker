@@ -102,7 +102,15 @@ pub fn up(h: &Host, project: &str) -> Result<UpReport> {
     }
 
     let vm_dir = lima_vm_dir(&h.lima_home, &vm)?;
-    ensure_private_dir(&crate::lima::sandbox::hostagent_tmp(&vm_dir))?;
+    // The hostagent can write the VM dir: never follow whatever it left at tmp.
+    let ha_tmp = crate::lima::sandbox::hostagent_tmp(&vm_dir);
+    if std::fs::symlink_metadata(&ha_tmp).is_ok_and(|m| !m.file_type().is_dir()) {
+        std::fs::remove_file(&ha_tmp).map_err(|e| {
+            crate::error::BunkerError::io(format!("cannot remove {}", ha_tmp.display()), e)
+        })?;
+    }
+    ensure_private_dir(&ha_tmp)?;
+    crate::lima::vm::seal_instance_yaml(&vm_dir)?;
     write_private(
         &pd.sandbox_sb(),
         hostagent_profile(&vm_dir, cfg.ports.ssh, &h.limactl).as_bytes(),
@@ -338,5 +346,37 @@ pub(crate) mod tests {
         let h = host(&r, &CONFINED, d.path());
         project(&h, "t");
         assert_eq!(up(&h, "t").unwrap_err().code, "vm_start_timeout");
+    }
+}
+
+#[cfg(test)]
+mod symlink_tests {
+    use super::tests::scripted;
+    use super::*;
+    use crate::host::testing::{CONFINED, host, project};
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn symlinked_hostagent_tmp_is_replaced_not_followed() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        let victim = d.path().join("victim");
+        std::fs::create_dir(&victim).unwrap();
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let vm_dir = h.lima_home.join("bunker-t");
+        std::fs::create_dir_all(&vm_dir).unwrap();
+        std::os::unix::fs::symlink(&victim, vm_dir.join("tmp")).unwrap();
+        up(&h, "t").unwrap();
+        assert_eq!(
+            std::fs::metadata(&victim).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert!(
+            std::fs::symlink_metadata(vm_dir.join("tmp"))
+                .unwrap()
+                .is_dir()
+        );
     }
 }

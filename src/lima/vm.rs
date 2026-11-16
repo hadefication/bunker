@@ -223,6 +223,71 @@ pub fn wait_running(h: &Host, vm: &str) -> Result<()> {
     }
 }
 
+/// Lima rereads the instance's lima.yaml on every start, including the restarts launchd does on
+/// its own. The hostagent may write the rest of the VM dir, so the file is made user-immutable:
+/// macOS then refuses writes, renames and hard links to it (a path-only deny could be bypassed by
+/// linking it from the writable dir). A file with extra links is never sealed.
+pub fn seal_instance_yaml(vm_dir: &Path) -> Result<()> {
+    set_immutable(vm_dir, true)
+}
+
+/// Clears the flag so `limactl delete` (and future `limactl edit`) can change the instance.
+pub fn unseal_instance_yaml(vm_dir: &Path) -> Result<()> {
+    set_immutable(vm_dir, false)
+}
+
+fn tampered(msg: String) -> BunkerError {
+    BunkerError::new("instance_tampered", ExitCode::Refused, msg)
+        .hint("inspect it, then bunker destroy and bunker up to rebuild the VM")
+}
+
+fn set_immutable(vm_dir: &Path, on: bool) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let yaml = vm_dir.join("lima.yaml");
+    let Ok(m) = std::fs::symlink_metadata(&yaml) else {
+        return Ok(());
+    };
+    if on && (!m.file_type().is_file() || m.nlink() != 1) {
+        return Err(tampered(format!(
+            "{} is linked or not a plain file; refusing to start from it",
+            yaml.display()
+        )));
+    }
+    let flags = std::os::macos::fs::MetadataExt::st_flags(&m);
+    let new = if on {
+        flags | libc::UF_IMMUTABLE
+    } else {
+        flags & !libc::UF_IMMUTABLE
+    };
+    let c = std::ffi::CString::new(yaml.as_os_str().as_encoded_bytes())
+        .map_err(|_| tampered(format!("{} has a NUL in its path", yaml.display())))?;
+    // SAFETY: lchflags on a NUL-terminated path; it never follows a final symlink.
+    if unsafe { libc::lchflags(c.as_ptr(), new) } != 0 {
+        return Err(BunkerError::io(
+            format!("cannot change flags on {}", yaml.display()),
+            std::io::Error::last_os_error(),
+        ));
+    }
+    Ok(())
+}
+
+/// Refuses an instance whose lima.yaml is unsealed, linked or not a plain file.
+pub fn check_sealed(vm_dir: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let yaml = vm_dir.join("lima.yaml");
+    let Ok(m) = std::fs::symlink_metadata(&yaml) else {
+        return Ok(());
+    };
+    let sealed = std::os::macos::fs::MetadataExt::st_flags(&m) & libc::UF_IMMUTABLE != 0;
+    if !m.file_type().is_file() || m.nlink() != 1 || !sealed {
+        return Err(tampered(format!(
+            "{} is not sealed by bunker (unsealed, linked or replaced)",
+            yaml.display()
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +401,50 @@ mod tests {
             lima_vm_dir(d.path(), "bunker-t").unwrap(),
             real.join("bunker-t")
         );
+    }
+}
+
+#[cfg(test)]
+mod seal_tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    fn unseal_for_cleanup(p: &Path) {
+        let c = std::ffi::CString::new(p.to_str().unwrap()).unwrap();
+        unsafe { libc::chflags(c.as_ptr(), 0) };
+    }
+
+    #[test]
+    fn sealed_lima_yaml_refuses_hard_links_and_is_checked() {
+        let d = tempfile::tempdir().unwrap();
+        let yaml = d.path().join("lima.yaml");
+        std::fs::write(&yaml, "vmType: vz\n").unwrap();
+        assert_eq!(
+            check_sealed(d.path()).unwrap_err().code,
+            "instance_tampered",
+            "unsealed refuses"
+        );
+        seal_instance_yaml(d.path()).unwrap();
+        check_sealed(d.path()).unwrap();
+        assert!(
+            std::fs::hard_link(&yaml, d.path().join("x")).is_err(),
+            "hard link to a sealed file"
+        );
+        assert_eq!(std::fs::metadata(&yaml).unwrap().nlink(), 1);
+        unseal_instance_yaml(d.path()).unwrap();
+        std::fs::hard_link(&yaml, d.path().join("x")).unwrap();
+        assert_eq!(
+            seal_instance_yaml(d.path()).unwrap_err().code,
+            "instance_tampered",
+            "a linked yaml is never sealed"
+        );
+        unseal_for_cleanup(&yaml);
+    }
+
+    #[test]
+    fn missing_lima_yaml_is_fine_to_seal() {
+        let d = tempfile::tempdir().unwrap();
+        seal_instance_yaml(d.path()).unwrap();
+        unseal_instance_yaml(d.path()).unwrap();
     }
 }

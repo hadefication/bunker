@@ -77,6 +77,7 @@ pub fn destroy(h: &Host, project: &str) -> Result<DestroyReport> {
     crate::commands::lifecycle::stop(h, project)?;
     let vm = vm_name(project);
     if instance_status(h, &vm)?.is_some() {
+        crate::lima::vm::unseal_instance_yaml(&crate::lima::vm::lima_vm_dir(&h.lima_home, &vm)?)?;
         h.r.run_ok(&Cmd::new(h.limactl()).args(["delete", "--force", "--tty=false", &vm]))?;
     }
     for f in [

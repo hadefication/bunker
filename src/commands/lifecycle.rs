@@ -51,6 +51,7 @@ pub fn start(h: &Host, project: &str) -> Result<LifecycleReport> {
         .hint(format!("run bunker up {project}")));
     }
     let vm_dir = lima_vm_dir(&h.lima_home, &vm)?;
+    crate::lima::vm::check_sealed(&vm_dir)?;
     let [vm_agent, fwd_proxy, fwd_web] = agents_for(project, &cfg, &pd, &h.limactl, &vm_dir);
     ensure_in(h.r, &h.agents_dir, &vm_agent)?;
     wait_running(h, &vm)?;

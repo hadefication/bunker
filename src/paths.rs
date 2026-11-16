@@ -68,7 +68,15 @@ impl ProjectDir {
 }
 
 /// Creates `dir` (and parents) with mode 0700, and tightens it to 0700 if it already exists.
+/// Refuses a symlink at `dir` itself: chmod'ing through one would change some other directory.
 pub fn ensure_private_dir(dir: &Path) -> Result<()> {
+    if fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(BunkerError::new(
+            "symlink_refused",
+            crate::output::ExitCode::Refused,
+            format!("{} is a symlink; bunker won't follow it", dir.display()),
+        ));
+    }
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -150,6 +158,24 @@ mod tests {
             fs::metadata(&p).unwrap().permissions().mode() & 0o777,
             0o664,
             "umask must not apply"
+        );
+    }
+
+    #[test]
+    fn ensure_private_dir_refuses_a_symlink() {
+        let d = tempfile::tempdir().unwrap();
+        let victim = d.path().join("victim");
+        fs::create_dir(&victim).unwrap();
+        fs::set_permissions(&victim, fs::Permissions::from_mode(0o755)).unwrap();
+        let link = d.path().join("tmp");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        assert_eq!(
+            ensure_private_dir(&link).unwrap_err().code,
+            "symlink_refused"
+        );
+        assert_eq!(
+            fs::metadata(&victim).unwrap().permissions().mode() & 0o777,
+            0o755
         );
     }
 }
