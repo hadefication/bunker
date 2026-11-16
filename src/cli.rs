@@ -60,7 +60,7 @@ pub enum Command {
     },
     /// Start a stopped VM and its forwards.
     Start { project: String },
-    /// Stop the forwards and the VM. Nothing restarts at login until start or up.
+    /// Stop the tunnel, the forwards and the VM. Nothing restarts at login until start or up.
     Stop { project: String },
     /// Stop, then start.
     Restart { project: String },

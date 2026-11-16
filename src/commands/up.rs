@@ -174,10 +174,12 @@ pub fn up(
         }
         Confinement::Unconfined { reason, .. } => {
             warnings.push(format!("{reason}; not provisioning an unconfined VM"));
+            sync_tunnel(h, &pd, &cfg, &confinement)?;
             false
         }
         Confinement::Stopped => {
             warnings.push("the VM stopped before provisioning".into());
+            sync_tunnel(h, &pd, &cfg, &confinement)?;
             false
         }
     };
@@ -254,6 +256,21 @@ fn ensure_tunnel(
     )?;
     ensure_in(h.r, &h.agents_dir, &tunnel_agent(h, pd))?;
     Ok(Some(domain.clone()))
+}
+
+/// Runs the tunnel agent only while the VM is confined and the tunnel is set up (config,
+/// cloudflared.yml and credentials); otherwise removes it, so the domain never points at a web
+/// port nothing confined is serving (another local process could take it).
+pub fn sync_tunnel(h: &Host, pd: &ProjectDir, cfg: &Config, c: &Confinement) -> Result<()> {
+    let ready = cfg.domain.is_some()
+        && cfg.tunnel.is_some()
+        && pd.cloudflared_yml().exists()
+        && pd.tunnel_credentials().exists();
+    if ready && matches!(c, Confinement::Confined { .. }) {
+        ensure_in(h.r, &h.agents_dir, &tunnel_agent(h, pd)).map(|_| ())
+    } else {
+        crate::launchd::remove_in(h.r, &h.agents_dir, &label(Some(&pd.name), Role::Tunnel))
+    }
 }
 
 /// `com.bunker.<project>.tunnel`: cloudflared with bunker's config, restarted if it exits.
@@ -703,5 +720,53 @@ mod symlink_tests {
                 .iter()
                 .any(|c| c.program == "cloudflared" && c.args.iter().any(|a| a == "create"))
         );
+    }
+
+    fn tunnel_ready(h: &Host) -> ProjectDir {
+        let pd = crate::host::testing::project(h, "t");
+        std::fs::write(pd.cloudflared_yml(), "x").unwrap();
+        std::fs::write(pd.tunnel_credentials(), "{}").unwrap();
+        pd
+    }
+
+    #[test]
+    fn sync_tunnel_runs_it_only_for_a_confined_vm() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let h = host(&r, &CONFINED, d.path());
+        let pd = tunnel_ready(&h);
+        let cfg = Config::load(&pd).unwrap();
+        let plist = h.agents_dir.join("com.bunker.t.tunnel.plist");
+        sync_tunnel(&h, &pd, &cfg, &CONFINED.0).unwrap();
+        assert!(plist.exists());
+        let unconfined = Confinement::Unconfined {
+            hostagent: 1,
+            reason: "x".into(),
+        };
+        sync_tunnel(&h, &pd, &cfg, &unconfined).unwrap();
+        assert!(
+            !plist.exists(),
+            "an unconfined VM is taken off the internet"
+        );
+        sync_tunnel(&h, &pd, &cfg, &CONFINED.0).unwrap();
+        sync_tunnel(&h, &pd, &cfg, &Confinement::Stopped).unwrap();
+        assert!(!plist.exists());
+    }
+
+    #[test]
+    fn up_of_an_unconfined_vm_removes_its_tunnel() {
+        let d = tempfile::tempdir().unwrap();
+        let r = scripted("2.3.0", false);
+        let probe = crate::host::testing::FakeProbe(Confinement::Unconfined {
+            hostagent: 1,
+            reason: "x".into(),
+        });
+        let h = host(&r, &probe, d.path());
+        tunnel_ready(&h);
+        std::fs::create_dir_all(&h.agents_dir).unwrap();
+        std::fs::write(h.agents_dir.join("com.bunker.t.tunnel.plist"), "x").unwrap();
+        let rep = up(&h, &MemoryStore::default(), "t", false).unwrap();
+        assert!(rep.tunnel.is_none());
+        assert!(!h.agents_dir.join("com.bunker.t.tunnel.plist").exists());
     }
 }

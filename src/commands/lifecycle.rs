@@ -58,6 +58,7 @@ pub fn start(h: &Host, project: &str) -> Result<LifecycleReport> {
     ensure_in(h.r, &h.agents_dir, &fwd_proxy)?;
     ensure_in(h.r, &h.agents_dir, &fwd_web)?;
     let c = h.probe.confinement(project)?;
+    crate::commands::up::sync_tunnel(h, &pd, &cfg, &c)?;
     Ok(LifecycleReport {
         project: project.to_string(),
         action: "started",
@@ -65,10 +66,10 @@ pub fn start(h: &Host, project: &str) -> Result<LifecycleReport> {
     })
 }
 
-/// Removes the forwards, then the vm agent (plists too, so nothing returns at login), then stops
-/// the VM if the hostagent's exit didn't already.
+/// Removes the tunnel (off the internet first), the forwards, then the vm agent (plists too, so
+/// nothing returns at login), then stops the VM if the hostagent's exit didn't already.
 pub fn stop(h: &Host, project: &str) -> Result<LifecycleReport> {
-    for role in [Role::FwdProxy, Role::FwdWeb, Role::Vm] {
+    for role in [Role::Tunnel, Role::FwdProxy, Role::FwdWeb, Role::Vm] {
         remove_in(h.r, &h.agents_dir, &label(Some(project), role))?;
     }
     let vm = vm_name(project);
@@ -133,6 +134,7 @@ mod tests {
         assert_eq!(
             order,
             [
+                "com.bunker.t.tunnel",
                 "com.bunker.t.fwd-proxy",
                 "com.bunker.t.fwd-web",
                 "com.bunker.t.vm",
