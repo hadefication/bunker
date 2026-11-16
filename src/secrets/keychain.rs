@@ -44,8 +44,7 @@ impl KeychainStore {
     /// controls) and never the whole search list (an item elsewhere could shadow bunker's).
     fn keychains(&self) -> Result<Vec<SecKeychain>> {
         let Some(path) = &self.keychain else {
-            let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-            let login = login_keychain_path(&home);
+            let login = login_keychain_path(&user_home()?);
             let kc = SecKeychain::open(&login)
                 .map_err(|e| kc_error("open", &login.display().to_string(), e))?;
             return Ok(vec![kc]);
@@ -56,6 +55,43 @@ impl KeychainStore {
             .map_err(|e| kc_error("unlock", &path.display().to_string(), e))?;
         Ok(vec![kc])
     }
+}
+
+/// The user's home from the password database, not `$HOME`: an empty or relative `$HOME` would
+/// make the keychain path resolve against the current directory.
+pub fn user_home() -> Result<PathBuf> {
+    let fail = || {
+        BunkerError::new(
+            "home_dir",
+            ExitCode::Failure,
+            "cannot find this user's home directory",
+        )
+    };
+    let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut out: *mut libc::passwd = std::ptr::null_mut();
+    let mut buf = vec![0 as libc::c_char; 4096];
+    // SAFETY: getpwuid_r writes into pw and buf (sized by buf.len()) and sets out on success.
+    let rc = unsafe {
+        libc::getpwuid_r(
+            libc::getuid(),
+            &mut pw,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut out,
+        )
+    };
+    if rc != 0 || out.is_null() || pw.pw_dir.is_null() {
+        return Err(fail());
+    }
+    // SAFETY: pw_dir points into buf, NUL-terminated by getpwuid_r.
+    let dir = unsafe { std::ffi::CStr::from_ptr(pw.pw_dir) };
+    let home = PathBuf::from(
+        <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(dir.to_bytes()),
+    );
+    if !home.is_absolute() {
+        return Err(fail());
+    }
+    Ok(home)
 }
 
 /// `~/Library/Keychains/login.keychain-db`.
@@ -209,5 +245,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn user_home_comes_from_the_password_database() {
+        let h = user_home().unwrap();
+        assert!(h.is_absolute() && h.is_dir(), "{}", h.display());
     }
 }
