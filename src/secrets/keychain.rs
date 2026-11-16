@@ -39,13 +39,16 @@ impl KeychainStore {
 }
 
 impl KeychainStore {
-    /// Exactly one keychain: the login (default) keychain, or the test keychain, unlocked. Never
-    /// the whole search list, where an item in some other keychain could shadow bunker's.
+    /// Exactly one keychain: the login keychain opened by its path, or the test keychain. Never
+    /// the default keychain (anything running as the user can repoint it at a keychain it
+    /// controls) and never the whole search list (an item elsewhere could shadow bunker's).
     fn keychains(&self) -> Result<Vec<SecKeychain>> {
         let Some(path) = &self.keychain else {
-            return Ok(vec![
-                SecKeychain::default().map_err(|e| kc_error("open", "the login keychain", e))?,
-            ]);
+            let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+            let login = login_keychain_path(&home);
+            let kc = SecKeychain::open(&login)
+                .map_err(|e| kc_error("open", &login.display().to_string(), e))?;
+            return Ok(vec![kc]);
         };
         let mut kc = SecKeychain::open(path)
             .map_err(|e| kc_error("open", &path.display().to_string(), e))?;
@@ -53,6 +56,11 @@ impl KeychainStore {
             .map_err(|e| kc_error("unlock", &path.display().to_string(), e))?;
         Ok(vec![kc])
     }
+}
+
+/// `~/Library/Keychains/login.keychain-db`.
+pub fn login_keychain_path(home: &std::path::Path) -> PathBuf {
+    home.join("Library/Keychains/login.keychain-db")
 }
 
 impl SecretStore for KeychainStore {
@@ -181,5 +189,25 @@ mod tests {
             b"real"
         );
         let _ = sec(&["delete-keychain"]);
+    }
+
+    #[test]
+    fn login_keychain_is_opened_by_path_not_by_default() {
+        assert_eq!(
+            login_keychain_path(std::path::Path::new("/Users/x")),
+            std::path::PathBuf::from("/Users/x/Library/Keychains/login.keychain-db")
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn sys_login_keychain_opens_without_prompt() {
+        let store = KeychainStore { keychain: None };
+        assert!(
+            store
+                .get("bunker-probe-nonexistent", "NOPE")
+                .unwrap()
+                .is_none()
+        );
     }
 }
