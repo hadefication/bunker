@@ -11,9 +11,15 @@ keywords = ["laravel", "lima", "deployment", "macos", "cloudflare"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+bytes = "1.12.1"
 clap = { version = "4", features = ["derive"] }
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+libc = "0.2.191"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 toml = "1.2.1"
 toml_edit = "0.25.19"
 

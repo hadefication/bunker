@@ -1,4 +1,4 @@
-use bunker::cli::{Cli, Command, NetCommand};
+use bunker::cli::{Cli, Command, NetCommand, ProxyCommand};
 use bunker::commands;
 use bunker::commands::net::NetArgs;
 use bunker::error::Result;
@@ -40,6 +40,9 @@ fn main() {
                 force,
             }),
         ),
+        Command::Proxy {
+            cmd: ProxyCommand::Serve,
+        } => finish(format, commands::proxy::serve()),
         Command::Net { cmd } => finish(
             format,
             commands::net::run(match cmd {

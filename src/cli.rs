@@ -55,8 +55,20 @@ pub enum Command {
         #[command(subcommand)]
         cmd: NetCommand,
     },
+    /// Run the egress proxy (started by launchd as com.bunker.proxy).
+    #[command(hide = true)]
+    Proxy {
+        #[command(subcommand)]
+        cmd: ProxyCommand,
+    },
     /// Print the version, commit and build date.
     Version,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProxyCommand {
+    /// Serve every project's proxy port until SIGTERM.
+    Serve,
 }
 
 #[derive(Debug, Subcommand)]

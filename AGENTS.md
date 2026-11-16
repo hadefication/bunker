@@ -13,7 +13,11 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
   bunker writes. `src/config/`: `bunker.toml` types, validation, repo detection, port allocation.
 - `src/net/`: format-preserving `[network]` edits and the `network.jsonl` event log.
   `src/time.rs`: RFC 3339 timestamps (no date crate).
-- `src/proxy/`: the egress proxy (`addr::is_internal` is shared with config validation).
+- `src/proxy/`: the egress proxy. `addr::is_internal` (shared with config validation), `policy`
+  (allow/build/deny matching), `lease` (time-boxed build and maintenance openings), `resolve`
+  (`Resolver`/`Connector` traits so tests prove it connects only to checked addresses), `server`
+  (hyper 1, one listener per project), `own` (the Mac's addresses via getifaddrs).
+  `bunker proxy serve` is hidden; launchd runs it as `com.bunker.proxy`.
 - `src/run.rs`: every external program goes through the `Runner` trait. Tests use
   `RecordingRunner` to check exact invocations and `assert_no_secret_in_argv`.
 - `tests/`: integration tests (`assert_cmd`).

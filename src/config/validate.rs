@@ -51,7 +51,8 @@ pub fn validate_domain(domain: &str) -> Result<()> {
     Ok(())
 }
 
-fn is_dns_name(s: &str) -> bool {
+/// A DNS name: labels of 1-63 letters, digits and inner hyphens, at most 253 characters.
+pub fn is_dns_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 253
         && s.split('.').all(|l| {
