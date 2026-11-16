@@ -1,10 +1,1 @@
-pub mod edit;
-pub mod info;
-pub mod init;
-pub mod lifecycle;
-pub mod list;
-pub mod logs;
-pub mod run;
-pub mod self_update;
-pub mod teardown;
-pub mod update;
+pub mod version;

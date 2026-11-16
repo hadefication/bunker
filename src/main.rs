@@ -1,96 +1,25 @@
-mod cli;
-mod commands;
-mod config;
-mod framework;
-mod templates;
-
-use clap::{CommandFactory, Parser};
-use cli::{Cli, Command};
+use bunker::cli::{Cli, Command};
+use bunker::commands;
+use bunker::output::{self, ExitCode, Format};
+use clap::Parser;
 
 fn main() {
-    let cli = Cli::parse();
-
-    let result = match cli.command {
-        Command::Init {
-            name,
-            port,
-            domain,
-            tunnel,
-            scheduler,
-            php,
-            frankenphp,
-            cloudflared,
-            yes,
-            dry_run,
-        } => commands::init::run(commands::init::InitArgs {
-            name,
-            port,
-            domain,
-            tunnel,
-            scheduler,
-            php,
-            frankenphp,
-            cloudflared,
-            yes,
-            dry_run,
-        }),
-        Command::Info { project, verbose } => commands::info::run(project, verbose),
-        Command::Start { project } => commands::lifecycle::start(project),
-        Command::Stop { project } => commands::lifecycle::stop(project),
-        Command::Restart { project } => commands::lifecycle::restart(project),
-        Command::Status { project } => commands::lifecycle::status(project),
-        Command::Run { project } => commands::run::run(project),
-        Command::Logs {
-            project,
-            service,
-            follow,
-        } => commands::logs::run(project, service, follow),
-        Command::List => commands::list::run(),
-        Command::Teardown { project, yes } => commands::teardown::run(project, yes),
-        Command::Edit { project } => commands::edit::run(project),
-        Command::Update { project } => commands::update::run(project),
-        Command::SelfUpdate => commands::self_update::run(),
-        Command::Completions { shell } => {
-            let shell = shell
-                .parse::<clap_complete::Shell>()
-                .map_err(|_| anyhow::anyhow!("Unknown shell '{}'. Use: bash, zsh, fish", shell));
-            match shell {
-                Ok(s) => {
-                    clap_complete::generate(
-                        s,
-                        &mut Cli::command(),
-                        "bunker",
-                        &mut std::io::stdout(),
-                    );
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            // --help and --version are clap "errors" that print to stdout and exit 0.
+            let usage = e.use_stderr();
+            let _ = e.print();
+            std::process::exit(if usage { ExitCode::Usage as i32 } else { 0 });
         }
     };
-
-    if let Err(e) = result {
-        output::error(&e.to_string());
-        std::process::exit(1);
-    }
-}
-
-pub mod output {
-    use colored::Colorize;
-
-    pub fn info(msg: &str) {
-        println!("{} {}", "==>".blue(), msg);
-    }
-
-    pub fn success(msg: &str) {
-        println!("{} {}", "==>".green(), msg);
-    }
-
-    pub fn warn(msg: &str) {
-        println!("{} {}", "==>".yellow(), msg);
-    }
-
-    pub fn error(msg: &str) {
-        eprintln!("{} {}", "==>".red(), msg);
-    }
+    let format = if cli.json {
+        Format::Json
+    } else {
+        Format::Human
+    };
+    let code = match cli.command {
+        Command::Version => output::emit(format, &commands::version::VersionReport),
+    };
+    std::process::exit(code as i32);
 }
