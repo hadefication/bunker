@@ -65,6 +65,11 @@ pub enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Secrets (Keychain, never printed) and plain settings for the guest's .env.
+    Env {
+        #[command(subcommand)]
+        cmd: EnvCommand,
+    },
     /// Edit and inspect the project's outbound allowlist.
     Net {
         #[command(subcommand)]
@@ -84,6 +89,33 @@ pub enum Command {
 pub enum ProxyCommand {
     /// Serve every project's proxy port until SIGTERM.
     Serve,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EnvCommand {
+    /// Store a secret (read without echo, or --stdin), or with --plain: `env set KEY VALUE --plain`.
+    Set {
+        key: String,
+        /// [project] for a secret; VALUE [project] with --plain.
+        #[arg(num_args = 0..=2)]
+        rest: Vec<String>,
+        /// Read the secret from stdin instead of the terminal.
+        #[arg(long)]
+        stdin: bool,
+        /// A non-secret setting, stored in bunker.toml [env].
+        #[arg(long)]
+        plain: bool,
+        /// An outbound credential bound to a host (not yet supported).
+        #[arg(long)]
+        bind: Option<String>,
+    },
+    /// Remove a secret or setting.
+    Unset {
+        key: String,
+        project: Option<String>,
+    },
+    /// List names and kinds. Never values.
+    List { project: Option<String> },
 }
 
 #[derive(Debug, Subcommand)]

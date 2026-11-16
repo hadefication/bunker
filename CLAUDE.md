@@ -26,6 +26,10 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
 - `src/lima/vm.rs`: limactl version, instances, the vm and forward agents, readiness wait.
   `src/lima/confine.rs`: `ConfinementProbe`; `SystemProbe` reads `ha.pid` and asks
   `sandbox_check` whether that process is sandboxed.
+- `src/secrets/`: `SecretStore` (`KeychainStore`, `MemoryStore` for tests), `generate_missing`
+  (APP_KEY, DB_PASSWORD, Passport keys via openssl on stdin), `render_env` (quoting for phpdotenv),
+  `meta::record` (names and kinds in bunker.toml). `BUNKER_KEYCHAIN` points tests at a throwaway
+  keychain file; never the login keychain.
 - `src/launchd.rs`: labels, plist rendering, install/remove/kickstart/status via `launchctl` in
   `gui/<uid>`. `BUNKER_LAUNCH_AGENTS_DIR` overrides `~/Library/LaunchAgents`.
 - `src/run.rs`: every external program goes through the `Runner` trait. Tests use

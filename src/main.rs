@@ -1,4 +1,4 @@
-use bunker::cli::{Cli, Command, NetCommand, ProxyCommand};
+use bunker::cli::{Cli, Command, EnvCommand, NetCommand, ProxyCommand};
 use bunker::commands;
 use bunker::commands::net::NetArgs;
 use bunker::error::Result;
@@ -55,6 +55,40 @@ fn main() {
             Ok(()) => with_host(format, |h| commands::destroy::destroy(h, &project)),
             Err(e) => output::emit_error(format, &e),
         },
+        Command::Env { cmd } => {
+            let args = match cmd {
+                EnvCommand::Set {
+                    key,
+                    rest,
+                    stdin,
+                    plain,
+                    bind,
+                } => commands::env::EnvArgs::Set {
+                    key,
+                    rest,
+                    stdin,
+                    plain,
+                    bind,
+                },
+                EnvCommand::Unset { key, project } => {
+                    commands::env::EnvArgs::Unset { key, project }
+                }
+                EnvCommand::List { project } => commands::env::EnvArgs::List { project },
+            };
+            let read_stdin = || {
+                let mut v = Vec::new();
+                std::io::Read::read_to_end(&mut std::io::stdin(), &mut v).map(|_| v)
+            };
+            // SAFETY: isatty only inspects the descriptor.
+            let tty = unsafe { libc::isatty(0) } == 1;
+            match commands::env::prepare(args, &read_stdin, tty) {
+                Ok(p) => {
+                    let store = bunker::secrets::keychain::KeychainStore::from_env();
+                    with_host(format, |h| commands::env::run(h, &store, p))
+                }
+                Err(e) => output::emit_error(format, &e),
+            }
+        }
         Command::Proxy {
             cmd: ProxyCommand::Serve,
         } => finish(format, commands::proxy::serve()),
