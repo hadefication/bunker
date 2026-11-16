@@ -79,13 +79,9 @@ pub fn destroy(h: &Host, project: &str) -> Result<DestroyReport> {
     if instance_status(h, &vm)?.is_some() {
         let vm_dir = crate::lima::vm::lima_vm_dir(&h.lima_home, &vm)?;
         crate::lima::vm::unseal_instance_yaml(&vm_dir)?;
-        if let Err(e) =
-            h.r.run_ok(&Cmd::new(h.limactl()).args(["delete", "--force", "--tty=false", &vm]))
-        {
-            // Don't leave a half-deleted instance with its config writable.
-            let _ = crate::lima::vm::seal_instance_yaml(&vm_dir);
-            return Err(e);
-        }
+        // On failure lima.yaml stays unsealed on purpose: re-sealing could bless a changed file,
+        // and an unsealed instance is refused by the next up or start.
+        h.r.run_ok(&Cmd::new(h.limactl()).args(["delete", "--force", "--tty=false", &vm]))?;
     }
     for f in [
         pd.lima_yaml(),
@@ -132,5 +128,26 @@ mod tests {
         assert!(pd.config().exists() && !pd.lima_yaml().exists() && !pd.sandbox_sb().exists());
         assert!(r.calls().iter().any(|c| c.program == "limactl"
             && c.args == ["delete", "--force", "--tty=false", "bunker-t"]));
+    }
+
+    #[test]
+    fn failed_delete_leaves_lima_yaml_unsealed_for_up_to_refuse() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let stopped = Output::ok("{\"name\":\"bunker-t\",\"status\":\"Stopped\"}\n");
+        r.respond("limactl", &["list"], stopped.clone());
+        r.respond("limactl", &["list"], stopped);
+        r.respond("limactl", &["delete"], Output::fail(1, "busy"));
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        let vm_dir = h.lima_home.join("bunker-t");
+        std::fs::create_dir_all(&vm_dir).unwrap();
+        std::fs::write(vm_dir.join("lima.yaml"), "x").unwrap();
+        crate::lima::vm::seal_instance_yaml(&vm_dir).unwrap();
+        assert!(destroy(&h, "t").is_err());
+        assert_eq!(
+            crate::lima::vm::check_sealed(&vm_dir).unwrap_err().code,
+            "instance_tampered"
+        );
     }
 }
