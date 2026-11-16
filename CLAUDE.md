@@ -31,6 +31,9 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
 - `src/tunnel/`: `cloudflared` (find, create, route, delete named tunnels, always with
   `--origincert ~/.cloudflared/cert.pem`) and `config` (`cloudflared.yml`). `up` runs it last, only
   for a confined VM with both `domain` and `tunnel`; `destroy` deletes the tunnel.
+- `src/logs/`: `scrub` (`Scrubber`: Keychain values, Authorization/Bearer, secret-named `k=v` and
+  JSON values, PEM private keys) and `tail` (host log files). `bunker logs` runs every line through
+  it; `Runner::stream` feeds lines as they arrive.
 - `src/deploy/`: `source` (the release tar: tracked files minus `.env*`, `--dirty` for the working
   tree), `steps` (the pipeline as data: name, guest user, script, lease), `lock` (flock on
   `deploy.lock`), `run` (`deploy` and `rollback`). Root steps never chmod or chown inside a

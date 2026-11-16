@@ -76,6 +76,31 @@ pub enum Command {
     },
     /// Switch back to the previous release. Migrations are not rolled back.
     Rollback { project: String },
+    /// The VM, confinement, forwards, proxy, tunnel, guest services and live release.
+    Status {
+        /// One project; all of them when omitted.
+        project: Option<String>,
+    },
+    /// Recent log lines, secrets redacted: nginx, php, worker, app (default), proxy or tunnel.
+    Logs {
+        /// [project] [source]; the project defaults to the one whose repo holds this directory.
+        #[arg(num_args = 0..=2)]
+        args: Vec<String>,
+        /// Keep printing new lines.
+        #[arg(short, long)]
+        follow: bool,
+        /// How many lines to start with.
+        #[arg(short, long, default_value_t = 100)]
+        n: usize,
+    },
+    /// Run artisan as the app user in the live release: bunker artisan <project> -- <args>.
+    Artisan {
+        project: String,
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// An interactive shell in the project's VM.
+    Shell { project: String },
     /// Delete the VM, its agents and generated files. Keeps bunker.toml, backups and logs.
     Destroy {
         project: String,

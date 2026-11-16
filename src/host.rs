@@ -88,6 +88,9 @@ pub(crate) mod testing {
         fn confinement(&self, _project: &str) -> Result<Confinement> {
             Ok(self.0.clone())
         }
+        fn sandboxed(&self, _pid: i32) -> bool {
+            matches!(self.0, Confinement::Confined { .. })
+        }
     }
 
     pub const CONFINED: FakeProbe = FakeProbe(Confinement::Confined { hostagent: 4242 });

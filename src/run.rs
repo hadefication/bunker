@@ -104,6 +104,16 @@ pub trait Runner: Send + Sync {
     /// Runs the command. A non-zero exit is an `Ok(Output)`; only failing to start it is an error.
     fn run(&self, cmd: &Cmd) -> Result<Output>;
 
+    /// Runs the command, calling `on_line` for each stdout line as it arrives (`logs -f`), and
+    /// returns the exit status. The default runs it to the end first.
+    fn stream(&self, cmd: &Cmd, on_line: &mut dyn FnMut(&str)) -> Result<i32> {
+        let out = self.run(cmd)?;
+        for l in out.stdout_str().lines() {
+            on_line(l);
+        }
+        Ok(out.status)
+    }
+
     /// Runs the command and turns a non-zero exit into an error carrying its stderr.
     fn run_ok(&self, cmd: &Cmd) -> Result<Output> {
         let out = self.run(cmd)?;
@@ -127,6 +137,41 @@ pub trait Runner: Send + Sync {
 pub struct SystemRunner;
 
 impl Runner for SystemRunner {
+    fn stream(&self, cmd: &Cmd, on_line: &mut dyn FnMut(&str)) -> Result<i32> {
+        use std::io::BufRead;
+        let mut c = Command::new(&cmd.program);
+        c.args(&cmd.args)
+            .envs(cmd.env.iter().map(|(k, v)| (k, v)))
+            .stdin(if cmd.stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        let mut child = c
+            .spawn()
+            .map_err(|e| BunkerError::io(format!("cannot run {}", cmd.program), e))?;
+        if let Some(bytes) = &cmd.stdin {
+            let mut pipe = child.stdin.take().expect("stdin was piped");
+            let bytes = bytes.clone();
+            std::thread::spawn(move || {
+                let _ = pipe.write_all(&bytes);
+            });
+        }
+        let stdout = child.stdout.take().expect("stdout was piped");
+        for line in std::io::BufReader::new(stdout).lines() {
+            match line {
+                Ok(l) => on_line(&l),
+                Err(_) => break,
+            }
+        }
+        let status = child
+            .wait()
+            .map_err(|e| BunkerError::io(format!("cannot wait for {}", cmd.program), e))?;
+        Ok(status.code().unwrap_or(1))
+    }
+
     fn run(&self, cmd: &Cmd) -> Result<Output> {
         let mut c = Command::new(&cmd.program);
         c.args(&cmd.args).envs(cmd.env.iter().map(|(k, v)| (k, v)));

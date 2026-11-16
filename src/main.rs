@@ -78,6 +78,16 @@ fn main() {
                 commands::deploy::deploy(h, &store, &project, opts, &progress)
             })
         }
+        Command::Status { project } => {
+            with_host(format, |h| commands::status::status(h, project.as_deref()))
+        }
+        Command::Logs { args, follow, n } => run_logs(format, &args, follow, n),
+        Command::Artisan { project, args } => std::process::exit(with_host_code(format, |h| {
+            commands::artisan::artisan(h, &project, &args, stdin_tty())
+        })),
+        Command::Shell { project } => std::process::exit(with_host_code(format, |h| {
+            commands::shell::shell(h, &project, stdin_tty())
+        })),
         Command::Rollback { project } => {
             with_host(format, |h| commands::rollback::rollback(h, &project))
         }
@@ -150,6 +160,52 @@ fn main() {
         ),
     };
     std::process::exit(code as i32);
+}
+
+fn stdin_tty() -> bool {
+    // SAFETY: isatty only inspects the descriptor.
+    unsafe { libc::isatty(0) == 1 }
+}
+
+/// For a command whose exit status is the guest program's (artisan, shell).
+fn with_host_code(format: Format, f: impl FnOnce(&Host) -> Result<i32>) -> i32 {
+    let runner = SystemRunner;
+    let probe = SystemProbe {
+        lima_home: bunker::host::lima_home(),
+    };
+    match Host::system(&runner, &probe).and_then(|h| f(&h)) {
+        Ok(code) => code,
+        Err(e) => output::emit_error(format, &e) as i32,
+    }
+}
+
+/// Lines stream as they arrive; `--json` gathers them (or, with `-f`, prints one object per line).
+fn run_logs(format: Format, args: &[String], follow: bool, n: usize) -> ExitCode {
+    let home = bunker::paths::bunker_home();
+    let (project, source) = match commands::logs::parse_args(&home, args) {
+        Ok(x) => x,
+        Err(e) => return output::emit_error(format, &e),
+    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let pd = match bunker::config::resolve_project(project.as_deref(), &cwd) {
+        Ok(pd) => pd,
+        Err(e) => return output::emit_error(format, &e),
+    };
+    let store = bunker::secrets::keychain::KeychainStore::from_env();
+    let gather = matches!(format, Format::Json) && !follow;
+    with_host(format, |h| {
+        let mut lines = Vec::new();
+        commands::logs::logs(h, &store, &pd.name, source, follow, n, &mut |l| {
+            if gather {
+                lines.push(l.to_string());
+            } else if matches!(format, Format::Json) {
+                println!("{}", serde_json::json!({"line": l}));
+            } else {
+                println!("{l}");
+            }
+        })?;
+        Ok(commands::logs::LinesReport { lines })
+    })
 }
 
 /// Runs a command that needs the machine: the system runner, the Seatbelt probe, real paths.

@@ -1,10 +1,14 @@
+pub mod artisan;
 pub mod deploy;
 pub mod destroy;
 pub mod env;
 pub mod init;
 pub mod lifecycle;
+pub mod logs;
 pub mod net;
 pub mod proxy;
 pub mod rollback;
+pub mod shell;
+pub mod status;
 pub mod up;
 pub mod version;

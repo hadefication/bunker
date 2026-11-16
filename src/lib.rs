@@ -8,6 +8,7 @@ pub mod guest;
 pub mod host;
 pub mod launchd;
 pub mod lima;
+pub mod logs;
 pub mod net;
 pub mod output;
 pub mod paths;

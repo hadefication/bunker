@@ -22,6 +22,10 @@ impl Confinement {
 
 pub trait ConfinementProbe: Send + Sync {
     fn confinement(&self, project: &str) -> Result<Confinement>;
+    /// Whether process `pid` runs under a Seatbelt profile (the forwards, for status).
+    fn sandboxed(&self, pid: i32) -> bool {
+        pid_sandboxed(pid)
+    }
 }
 
 pub struct SystemProbe {
