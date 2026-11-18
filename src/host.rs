@@ -27,6 +27,8 @@ pub struct Host<'a> {
     /// Pause between readiness checks, and how long to wait for a VM.
     pub poll: Duration,
     pub wait_timeout: Duration,
+    /// Set by SIGINT, SIGTERM or SIGHUP once `interrupt::install` ran (deploy and up do).
+    pub interrupted: &'static std::sync::atomic::AtomicBool,
 }
 
 impl<'a> Host<'a> {
@@ -56,6 +58,7 @@ impl<'a> Host<'a> {
                 .unwrap_or_default(),
             poll: Duration::from_secs(2),
             wait_timeout: Duration::from_secs(180),
+            interrupted: &crate::interrupt::FLAG,
         })
     }
 
@@ -121,6 +124,7 @@ pub(crate) mod testing {
             cloudflared_cert: dir.join("cert.pem"),
             poll: Duration::from_millis(1),
             wait_timeout: Duration::from_millis(50),
+            interrupted: Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false))),
         }
     }
 

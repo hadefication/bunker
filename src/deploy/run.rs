@@ -114,6 +114,14 @@ pub fn deploy(
     let mut lease: Option<LeaseGuard> = None;
     let mut switched = false;
     for st in steps(&cfg, &release, first, opts.allow_advisories) {
+        // A signal before the switch stops here and cleans up; after it, finishing (reload,
+        // prune) is quicker and safer than stopping half way.
+        if !switched && h.interrupted.load(std::sync::atomic::Ordering::SeqCst) {
+            drop(lease.take());
+            discard(h, &vm, &dir, &mut log);
+            log.save();
+            return Err(interrupted(project, st.name));
+        }
         if st.needs_lease && lease.is_none() {
             lease = Some(open_lease(&pd, LeaseKind::Build, BUILD_LEASE)?);
         } else if !st.needs_lease {
@@ -136,11 +144,12 @@ pub fn deploy(
         if let Err(e) = res {
             drop(lease.take());
             if !switched {
-                // A half-built release is never left behind; current is untouched.
-                let rm = format!("rm -rf -- {dir}\n");
-                let _ = run_script(h, &vm, As::Root, &rm, &mut log);
+                discard(h, &vm, &dir, &mut log);
             }
             log.save();
+            if !switched && h.interrupted.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(interrupted(project, st.name));
+            }
             return Err(step_error(&pd, st.name, switched, &release, e));
         }
         if st.name == "switch" {
@@ -206,6 +215,21 @@ pub fn rollback(h: &Host, project: &str) -> Result<RollbackReport> {
         from,
         to,
     })
+}
+
+fn interrupted(project: &str, step: &str) -> BunkerError {
+    BunkerError::new(
+        "interrupted",
+        ExitCode::Failure,
+        format!("{project}: deploy interrupted at {step}; nothing was switched"),
+    )
+    .hint("the half-built release was removed and the build hosts closed; deploy again")
+}
+
+/// A half-built release is never left behind; current is untouched.
+fn discard(h: &Host, vm: &str, dir: &str, log: &mut Log) {
+    let rm = format!("rm -rf -- {dir}\n");
+    let _ = run_script(h, vm, As::Root, &rm, log);
 }
 
 fn require_confined(h: &Host, project: &str) -> Result<()> {
@@ -624,6 +648,78 @@ mod tests {
     }
 
     #[test]
+    fn a_signal_mid_deploy_closes_the_lease_and_removes_the_release() {
+        // Ctrl-C, SIGTERM or SIGHUP while composer runs: bunker notes it (main installs the
+        // handler), stops at the step boundary and cleans up instead of dying with the lease open.
+        let d = tempfile::tempdir().unwrap();
+        let flag: &'static std::sync::atomic::AtomicBool =
+            Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+        let r = runner(false);
+        on_shell(&r, move |c| {
+            if stdin(c).contains("composer install") {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            Output::ok("")
+        });
+        let mut h = host(&r, &CONFINED, d.path());
+        h.interrupted = flag;
+        let (pd, _repo) = fixture(&h);
+        let e = deploy(
+            &h,
+            &MemoryStore::default(),
+            "t",
+            DeployOpts::default(),
+            &quiet,
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "interrupted");
+        assert!(!lease_active(
+            &pd,
+            LeaseKind::Build,
+            std::time::SystemTime::now()
+        ));
+        let calls = r.calls();
+        assert!(
+            !calls.iter().any(|c| stdin(c).contains("mv -T")),
+            "never switched"
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|c| stdin(c).contains("rm -rf -- /srv/app/releases/"))
+        );
+    }
+
+    #[test]
+    fn a_step_killed_by_ctrl_c_reports_the_interrupt() {
+        // Ctrl-C reaches composer too (same process group), so its step fails; say why.
+        let d = tempfile::tempdir().unwrap();
+        let flag: &'static std::sync::atomic::AtomicBool =
+            Box::leak(Box::new(std::sync::atomic::AtomicBool::new(false)));
+        let r = runner(false);
+        on_shell(&r, move |c| {
+            if stdin(c).contains("composer install") {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                Output::fail(130, "")
+            } else {
+                Output::ok("")
+            }
+        });
+        let mut h = host(&r, &CONFINED, d.path());
+        h.interrupted = flag;
+        let (_pd, _repo) = fixture(&h);
+        let e = deploy(
+            &h,
+            &MemoryStore::default(),
+            "t",
+            DeployOpts::default(),
+            &quiet,
+        )
+        .unwrap_err();
+        assert_eq!(e.code, "interrupted");
+    }
+
+    #[test]
     fn rollback_without_previous_is_refused() {
         let d = tempfile::tempdir().unwrap();
         let r = RecordingRunner::new();
@@ -712,7 +808,7 @@ mod tests {
             .iter()
             .position(|c| {
                 c.args.windows(3).any(|w| w == ["sudo", "-u", "app"])
-                    && stdin(c).contains("cd /srv/app/releases/20261116T000001Z-aaaaaaa\nphp artisan config:cache\nchmod 0640")
+                    && stdin(c).contains("cd /srv/app/releases/20261116T000001Z-aaaaaaa\nphp artisan config:cache\nsetfacl -b bootstrap/cache/config.php\nchmod 0600")
             })
             .expect("config re-cached as app in the target");
         let switch = calls

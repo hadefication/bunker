@@ -48,6 +48,8 @@ fn main() {
             overwrite_dns,
         } => {
             let store = bunker::secrets::keychain::KeychainStore::from_env();
+            // Provisioning holds a build lease; a signal must not kill bunker before it closes.
+            bunker::interrupt::install();
             with_host(format, |h| {
                 commands::up::up(h, &store, &project, overwrite_dns)
             })
@@ -74,6 +76,7 @@ fn main() {
                     println!("{}", commands::deploy::step_line(s));
                 }
             };
+            bunker::interrupt::install();
             with_host(format, |h| {
                 commands::deploy::deploy(h, &store, &project, opts, &progress)
             })

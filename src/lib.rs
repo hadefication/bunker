@@ -6,6 +6,7 @@ pub mod deploy;
 pub mod error;
 pub mod guest;
 pub mod host;
+pub mod interrupt;
 pub mod launchd;
 pub mod lima;
 pub mod logs;
