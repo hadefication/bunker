@@ -2,6 +2,7 @@ pub mod artisan;
 pub mod deploy;
 pub mod destroy;
 pub mod env;
+pub mod exec;
 pub mod init;
 pub mod lifecycle;
 pub mod logs;

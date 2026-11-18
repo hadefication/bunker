@@ -93,11 +93,19 @@ pub enum Command {
         #[arg(short, long, default_value_t = 100)]
         n: usize,
     },
-    /// Run artisan as the app user in the live release: bunker artisan <project> -- <args>.
+    /// Run artisan as the app user in the live release: bunker artisan <project> <args…>.
     Artisan {
         project: String,
-        #[arg(last = true)]
+        /// Passed to artisan as given; a leading `--` is optional.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// Run a command as the app user in the live release: bunker exec <project> <command…>.
+    Exec {
+        project: String,
+        /// The command and its arguments, as given; a leading `--` is optional.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
     },
     /// An interactive shell in the project's VM.
     Shell { project: String },
@@ -198,4 +206,40 @@ pub enum NetCommand {
         #[arg(short = 'n', default_value_t = 50)]
         n: usize,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn trailing(argv: &[&str]) -> (String, Vec<String>) {
+        match Cli::try_parse_from(argv).unwrap().command {
+            Command::Exec { project, command } => (project, command),
+            Command::Artisan { project, args } => (project, args),
+            _ => panic!("not exec or artisan"),
+        }
+    }
+
+    #[test]
+    fn exec_and_artisan_take_the_rest_with_or_without_a_double_dash() {
+        let want = |p: &str, a: &[&str]| (p.to_string(), a.iter().map(|s| s.to_string()).collect());
+        assert_eq!(
+            trailing(&["bunker", "exec", "t", "php", "-v"]),
+            want("t", &["php", "-v"])
+        );
+        assert_eq!(
+            trailing(&["bunker", "exec", "t", "--", "composer", "show", "--json"]),
+            want("t", &["composer", "show", "--json"])
+        );
+        assert_eq!(
+            trailing(&["bunker", "artisan", "t", "migrate", "--force"]),
+            want("t", &["migrate", "--force"])
+        );
+        assert_eq!(
+            trailing(&["bunker", "artisan", "t", "--", "migrate", "--force"]),
+            want("t", &["migrate", "--force"])
+        );
+        assert!(Cli::try_parse_from(["bunker", "exec", "t"]).is_err());
+    }
 }

@@ -1,4 +1,4 @@
-//! `bunker artisan <project> -- <args…>`: artisan as the app user in the live release.
+//! `bunker artisan <project> <args…>`: artisan as the app user in the live release.
 use crate::config::Config;
 use crate::error::Result;
 use crate::host::Host;

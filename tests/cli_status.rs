@@ -40,6 +40,9 @@ fn unknown_project_is_not_found_for_every_command() {
         &["--json", "status", "nope"][..],
         &["--json", "logs", "nope", "app"],
         &["--json", "artisan", "nope", "--", "about"],
+        &["--json", "artisan", "nope", "migrate", "--force"],
+        &["--json", "exec", "nope", "php", "-v"],
+        &["--json", "exec", "nope", "--", "composer", "show", "-i"],
         &["--json", "shell", "nope"],
     ] {
         let out = bunker(home.path()).args(args).assert().code(3);

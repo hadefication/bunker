@@ -97,6 +97,9 @@ fn main() {
         Command::Artisan { project, args } => std::process::exit(with_host_code(format, |h| {
             commands::artisan::artisan(h, &project, &args, stdin_tty())
         })),
+        Command::Exec { project, command } => std::process::exit(with_host_code(format, |h| {
+            commands::exec::exec(h, &project, &command, stdin_tty())
+        })),
         Command::Shell { project } => std::process::exit(with_host_code(format, |h| {
             commands::shell::shell(h, &project, stdin_tty())
         })),

@@ -516,7 +516,8 @@ bunker logs ...
 bunker env set|unset|list ...
 bunker net allow|deny|rm [--build] <host> | net reload | net log [--blocked]
 bunker backup init | backup [list] <project> | restore <project> [<bundle>] [--from <dest>]
-bunker artisan <project> -- <args>      run artisan in the current release as the app user
+bunker artisan <project> [--] <args>    run artisan in the current release as the app user
+bunker exec <project> [--] <command>    run any command in the current release as the app user
 bunker shell <project>                  interactive shell in the VM (for the human; see note)
 bunker start|stop|restart <project>
 bunker destroy <project>                delete VM, tunnel, LaunchAgents; print the CNAME to remove by hand
@@ -524,8 +525,8 @@ bunker remote enable|allow|revoke|add ...
 bunker version / --version / -V
 ```
 
-Every command has human output by default and `--json` for scripts. `bunker shell` and
-`bunker artisan` can reach `.env` inside the VM, because they're operator tools. The maintainer's
+Every command has human output by default and `--json` for scripts. `bunker shell`,
+`bunker artisan` and `bunker exec` can reach `.env` inside the VM, because they're operator tools. The maintainer's
 "no agent reads `.env`" rule is enforced by agent policy, not by bunker. Bunker's own output never
 contains values.
 

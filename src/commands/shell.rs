@@ -16,7 +16,7 @@ pub fn shell(h: &Host, project: &str, tty: bool) -> Result<i32> {
             "bunker shell is interactive and needs a terminal",
         )
         .hint(format!(
-            "for one command, use bunker artisan {project} -- <args>, or run bunker shell in a terminal"
+            "for one command, use bunker exec {project} <command…>, or run bunker shell in a terminal"
         )));
     }
     let c = Cmd::new(h.limactl())
