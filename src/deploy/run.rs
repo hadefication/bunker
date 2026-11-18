@@ -103,8 +103,10 @@ pub fn deploy(
     let release = release_name(SystemTime::now(), &archive.sha, archive.dirty);
     assert!(is_release_name(&release), "release_name made {release:?}");
     let vm = vm_name(project);
+    // First means nothing has gone live yet. Not "no .env": bunker env set writes one as soon as
+    // the VM runs, and a deploy that took that as a previous release would skip APP_KEY.
     let first =
-        !h.r.run(&shell(h, &vm).args(["test", "-e", "/srv/app/shared/.env"]))?
+        !h.r.run(&shell(h, &vm).args(["test", "-e", "/srv/app/current"]))?
             .success();
     let dir = format!("{BASE}/releases/{release}");
     let mut log = Log::new(&pd)?;
@@ -409,7 +411,7 @@ mod tests {
             Output::ok("{\"name\":\"bunker-t\",\"status\":\"Running\",\"dir\":\"/x\"}\n"),
         );
         let mut probe: Vec<&str> = SHELL.to_vec();
-        probe.extend(["test", "-e", "/srv/app/shared/.env"]);
+        probe.extend(["test", "-e", "/srv/app/current"]);
         r.respond(
             "limactl",
             &probe,
@@ -591,6 +593,31 @@ mod tests {
             })
             .expect(".env install");
         assert!(stdin(&env).contains("APP_KEY="));
+    }
+
+    #[test]
+    fn env_written_before_any_release_still_makes_a_first_deploy() {
+        // bunker env set on a running VM writes shared/.env before anything was deployed.
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        r.respond(
+            "limactl",
+            &["list"],
+            Output::ok("{\"name\":\"bunker-t\",\"status\":\"Running\",\"dir\":\"/x\"}\n"),
+        );
+        let mut env_probe: Vec<&str> = SHELL.to_vec();
+        env_probe.extend(["test", "-e", "/srv/app/shared/.env"]);
+        r.respond("limactl", &env_probe, Output::ok(""));
+        let mut current_probe: Vec<&str> = SHELL.to_vec();
+        current_probe.extend(["test", "-e", "/srv/app/current"]);
+        r.respond("limactl", &current_probe, Output::fail(1, ""));
+        let h = host(&r, &CONFINED, d.path());
+        let (_pd, _repo) = fixture(&h);
+        let store = MemoryStore::default();
+        let rep = deploy(&h, &store, "t", DeployOpts::default(), &quiet).unwrap();
+        assert!(rep.first);
+        assert!(rep.steps.iter().any(|s| s.name == "write_env"));
+        assert!(store.get("t", "APP_KEY").unwrap().is_some());
     }
 
     #[test]
