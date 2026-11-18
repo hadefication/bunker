@@ -353,7 +353,8 @@ This section was updated by the containment test. Its results section below is t
 - cloudflared, the VM, both SSH forwards and the proxy are LaunchAgents (`com.bunker.proxy`, and
   `com.bunker.<project>.{vm,fwd-proxy,fwd-web,tunnel}`): launchd is the supervisor,
   restarting them on crash and at login. The tunnel agent runs `bunker tunnel-run`, which starts
-  cloudflared only while the VM is confined.
+  cloudflared only when the VM is confined, re-checks every 5 seconds while it runs, and stops it
+  the moment the VM isn't (a manual `limactl stop` and `start`, or a VM that died).
 
 ### Deploy
 
@@ -385,8 +386,14 @@ This section was updated by the containment test. Its results section below is t
 8. Flip the `current` symlink atomically, then reload php-fpm and restart the workers.
 9. Keep the last 5 releases.
 
-`bunker rollback` flips `current` to the previous release and restarts the workers. It doesn't
-undo migrations, and says so.
+`bunker rollback` flips `current` to the release that was live before it and restarts the
+workers. Every switch records the release in a root-owned `/srv/app/history`, and the target comes
+from there, so a release that was uploaded but never went live is never chosen. It re-caches
+config in the target first, so settings changed since then aren't undone. It doesn't undo
+migrations, and says so.
+
+A deploy interrupted by Ctrl-C, SIGTERM or SIGHUP before the switch stops at the next step,
+removes the half-built release and closes the build hosts, like any failed step.
 
 ### Remote deploy over tailcat
 
@@ -563,7 +570,8 @@ contains values.
 - launchd has no ordering, so each piece retries until what it needs is up: the forwards exit on a
   failed forward (`ExitOnForwardFailure`) and launchd restarts them after `ThrottleInterval`. The
   tunnel agent runs `bunker tunnel-run <project>`, which starts cloudflared only once the confinement
-  probe says the VM is confined; until then it exits and launchd retries, so after a reboot the
+  probe says the VM is confined (and stops it if that changes); until then it exits and launchd
+  retries, so after a reboot the
   domain reaches the Mac only when the VM is back and confined (plan 2, Task 15).
 - The agents run the installed binary by its real path. `up` warns when that path is a build
   artifact under `target/`.

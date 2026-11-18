@@ -83,15 +83,15 @@ fn main() {
         }
         Command::TunnelRun { project } => std::process::exit(with_host_code(format, |h| {
             let cmd = commands::up::tunnel_gate(h, &project)?;
-            use std::os::unix::process::CommandExt;
-            // exec only returns on failure; launchd then retries after the agent's throttle.
-            let err = std::process::Command::new(&cmd.program)
+            // A child, not exec: confinement is re-checked for as long as cloudflared runs, and a
+            // failed check stops it; launchd then retries after the agent's throttle.
+            let mut child = std::process::Command::new(&cmd.program)
                 .args(&cmd.args)
-                .exec();
-            Err(bunker::error::BunkerError::io(
-                format!("cannot start {}", cmd.program),
-                err,
-            ))
+                .spawn()
+                .map_err(|e| {
+                    bunker::error::BunkerError::io(format!("cannot start {}", cmd.program), e)
+                })?;
+            commands::up::watch_tunnel(h, &project, &mut child, commands::up::TUNNEL_CHECK)
         })),
         Command::Status { project } => {
             with_host(format, |h| commands::status::status(h, project.as_deref()))

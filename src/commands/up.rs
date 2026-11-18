@@ -302,6 +302,57 @@ pub fn tunnel_gate(h: &Host, project: &str) -> Result<Cmd> {
     }
 }
 
+/// How often `tunnel-run` re-checks confinement while cloudflared runs.
+pub const TUNNEL_CHECK: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What `watch_tunnel` needs from cloudflared's process.
+pub trait Supervised {
+    /// The exit code once it has exited.
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>>;
+    fn kill(&mut self) -> std::io::Result<()>;
+}
+
+impl Supervised for std::process::Child {
+    fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
+        Ok(std::process::Child::try_wait(self)?.map(|s| s.code().unwrap_or(1)))
+    }
+    fn kill(&mut self) -> std::io::Result<()> {
+        std::process::Child::kill(self)?;
+        std::process::Child::wait(self).map(|_| ())
+    }
+}
+
+/// Keeps the tunnel up only while the VM stays confined: re-checks every `every`, kills
+/// cloudflared and fails the moment it isn't (launchd restarts the agent, whose gate then holds
+/// it). Returns cloudflared's own exit code if it exits first.
+pub fn watch_tunnel(
+    h: &Host,
+    project: &str,
+    child: &mut dyn Supervised,
+    every: std::time::Duration,
+) -> Result<i32> {
+    loop {
+        if let Some(code) = child
+            .try_wait()
+            .map_err(|e| BunkerError::io("cannot check on cloudflared", e))?
+        {
+            return Ok(code);
+        }
+        std::thread::sleep(every);
+        let state = match h.probe.confinement(project) {
+            Ok(Confinement::Confined { .. }) => continue,
+            Ok(other) => other.as_str().to_string(),
+            Err(e) => format!("unknown ({})", e.message),
+        };
+        let _ = child.kill();
+        return Err(BunkerError::new(
+            "tunnel_held",
+            ExitCode::Refused,
+            format!("stopped {project}'s tunnel: its VM is {state}"),
+        ));
+    }
+}
+
 /// `com.bunker.<project>.tunnel`: cloudflared with bunker's config, restarted if it exits.
 pub fn tunnel_agent(h: &Host, pd: &ProjectDir) -> Agent {
     let logs = pd.logs_dir();
@@ -881,6 +932,78 @@ mod symlink_tests {
             a.env.get("BUNKER_HOME"),
             Some(&h.home.to_string_lossy().into_owned())
         );
+    }
+
+    /// Answers `confinement` from a script, then repeats its last answer.
+    struct ScriptedProbe(std::sync::Mutex<Vec<Confinement>>);
+    impl crate::lima::confine::ConfinementProbe for ScriptedProbe {
+        fn confinement(&self, _p: &str) -> Result<Confinement> {
+            let mut v = self.0.lock().unwrap();
+            Ok(if v.len() > 1 {
+                v.remove(0)
+            } else {
+                v[0].clone()
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct FakeChild {
+        exit_after: Option<usize>,
+        polls: usize,
+        killed: bool,
+    }
+    impl Supervised for FakeChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
+            self.polls += 1;
+            Ok(match self.exit_after {
+                Some(n) if self.polls > n => Some(3),
+                _ if self.killed => Some(143),
+                _ => None,
+            })
+        }
+        fn kill(&mut self) -> std::io::Result<()> {
+            self.killed = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn tunnel_stops_once_the_vm_is_no_longer_confined() {
+        // A manual limactl stop/start leaves cloudflared serving an unconfined VM unless the
+        // gate keeps checking.
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let probe = ScriptedProbe(std::sync::Mutex::new(vec![
+            Confinement::Confined { hostagent: 1 },
+            Confinement::Confined { hostagent: 1 },
+            Confinement::Unconfined {
+                hostagent: 2,
+                reason: "not sandboxed".into(),
+            },
+        ]));
+        let h = host(&r, &probe, d.path());
+        let mut child = FakeChild::default();
+        let e = watch_tunnel(&h, "t", &mut child, std::time::Duration::from_millis(1)).unwrap_err();
+        assert!(child.killed);
+        assert_eq!((e.code, e.exit), ("tunnel_held", ExitCode::Refused));
+        assert!(e.message.contains("unconfined"), "{}", e.message);
+    }
+
+    #[test]
+    fn tunnel_watch_passes_cloudflareds_own_exit_through() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        let h = host(&r, &CONFINED, d.path());
+        let mut child = FakeChild {
+            exit_after: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(
+            watch_tunnel(&h, "t", &mut child, std::time::Duration::from_millis(1)).unwrap(),
+            3
+        );
+        assert!(!child.killed);
     }
 
     #[test]
