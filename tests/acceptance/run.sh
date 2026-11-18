@@ -191,7 +191,7 @@ phase_roundtrip() {
   printf '%s' "$value" | b env set BUNKER_ROUNDTRIP "$PROJECT" --stdin >>"$RUN/roundtrip.log" 2>&1 || fail "env set failed"
   want=$(printf '%s' "$value" | shasum -a 256 | cut -d' ' -f1)
   # config:cache makes env() return null, so read the file the way Laravel would (phpdotenv).
-  got=$(b artisan "$PROJECT" -- tinker --execute='echo hash("sha256", Dotenv\Dotenv::parse(file_get_contents(base_path(".env")))["BUNKER_ROUNDTRIP"]);' 2>>"$RUN/roundtrip.log" | grep -oE '[0-9a-f]{64}' | tail -1)
+  got=$(b exec "$PROJECT" php artisan tinker --execute='echo hash("sha256", Dotenv\Dotenv::parse(file_get_contents(base_path(".env")))["BUNKER_ROUNDTRIP"]);' 2>>"$RUN/roundtrip.log" | grep -oE '[0-9a-f]{64}' | tail -1)
   b env unset BUNKER_ROUNDTRIP "$PROJECT" >>"$RUN/roundtrip.log" 2>&1
   [[ $got == "$want" ]] || fail "roundtrip: the guest read $got, expected $want"
 }

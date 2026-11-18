@@ -94,12 +94,16 @@ fn main() {
             with_host(format, |h| commands::status::status(h, project.as_deref()))
         }
         Command::Logs { args, follow, n } => run_logs(format, &args, follow, n),
-        Command::Artisan { project, args } => std::process::exit(with_host_code(format, |h| {
-            commands::artisan::artisan(h, &project, &args, stdin_tty())
-        })),
-        Command::Exec { project, command } => std::process::exit(with_host_code(format, |h| {
-            commands::exec::exec(h, &project, &command, stdin_tty())
-        })),
+        Command::Exec { args } => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let code = match commands::exec::target(&bunker::paths::bunker_home(), &cwd, &args) {
+                Ok((pd, command)) => with_host_code(format, |h| {
+                    commands::exec::exec(h, &pd.name, &command, stdin_tty())
+                }),
+                Err(e) => output::emit_error(format, &e) as i32,
+            };
+            std::process::exit(code)
+        }
         Command::Shell { project } => std::process::exit(with_host_code(format, |h| {
             commands::shell::shell(h, &project, stdin_tty())
         })),
