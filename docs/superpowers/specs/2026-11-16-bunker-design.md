@@ -55,6 +55,8 @@ imported from the old deployment.
 - Quick (try) tunnels. Named tunnels only.
 - Multi-host, clustering, high availability, or hosting for anyone other than the maintainer.
 - A web UI.
+- Idle hibernation (stop an unused VM, wake it on the next request). A candidate design for later
+  is in `2026-11-18-idle-hibernation-design.md`.
 
 ## Anti-goals (would make it a failure even if it works)
 
