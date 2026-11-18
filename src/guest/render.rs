@@ -284,9 +284,15 @@ mod tests {
         // nginx blanks the header's param.
         assert!(!POOL.contains("env[HTTP_PROXY]"));
         assert!(render_nginx(&cfg()).contains("fastcgi_param HTTP_PROXY \"\";"));
-        for unit in [render_worker("queue", "php artisan queue:work"), SCHEDULER_SERVICE.to_string()] {
+        for unit in [
+            render_worker("queue", "php artisan queue:work"),
+            SCHEDULER_SERVICE.to_string(),
+        ] {
             for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
-                assert!(unit.contains(&format!("Environment={k}={proxy}")), "{k} in {unit}");
+                assert!(
+                    unit.contains(&format!("Environment={k}={proxy}")),
+                    "{k} in {unit}"
+                );
             }
             assert!(unit.contains("Environment=NO_PROXY=localhost,127.0.0.1"));
         }

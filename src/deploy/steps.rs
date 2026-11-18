@@ -44,8 +44,11 @@ fn in_release(dir: &str, lease: bool, body: &str) -> String {
 }
 
 /// Caches config as app, then takes it out of reach of every other guest user: bootstrap/cache's
-/// default ACL makes new files world-readable, and config.php holds every secret.
-pub const CONFIG_CACHE: &str = "php artisan config:cache\nchmod 0640 bootstrap/cache/config.php";
+/// default ACL makes new files world-readable, and config.php holds every secret. The ACL is
+/// stripped, not just chmodded: deploy owns the directory and could plant a default named entry
+/// that a chmod would only mask. (deploy also writes the code app runs, so this guards against
+/// other guest users and casual reads, not against a malicious deploy.)
+pub const CONFIG_CACHE: &str = "php artisan config:cache\nsetfacl -b bootstrap/cache/config.php\nchmod 0600 bootstrap/cache/config.php";
 
 /// Re-caches config in `dir` (a release, or `/srv/app/current`); runs as app.
 pub fn recache_script(dir: &str) -> String {
@@ -355,9 +358,9 @@ mod tests {
         assert!(
             caches
                 .cmd
-                .contains("php artisan config:cache\nchmod 0640 bootstrap/cache/config.php")
+                .contains("php artisan config:cache\nsetfacl -b bootstrap/cache/config.php\nchmod 0600 bootstrap/cache/config.php")
         );
-        assert!(recache_script("/srv/app/releases/r1").contains("cd /srv/app/releases/r1\nphp artisan config:cache\nchmod 0640 bootstrap/cache/config.php"));
+        assert!(recache_script("/srv/app/releases/r1").contains("cd /srv/app/releases/r1\nphp artisan config:cache\nsetfacl -b bootstrap/cache/config.php\nchmod 0600 bootstrap/cache/config.php"));
     }
 
     #[test]

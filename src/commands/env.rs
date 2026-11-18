@@ -437,7 +437,7 @@ mod tests {
                     ))
                     .any(|a| {
                         a.contains(
-                            "php artisan config:cache\nchmod 0640 bootstrap/cache/config.php",
+                            "php artisan config:cache\nsetfacl -b bootstrap/cache/config.php\nchmod 0600 bootstrap/cache/config.php",
                         )
                     })
         }));
