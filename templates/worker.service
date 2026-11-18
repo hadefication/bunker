@@ -8,6 +8,13 @@ ConditionPathExists=/srv/app/current/artisan
 User=app
 Group=app
 WorkingDirectory=/srv/app/current
+# Outbound calls go through bunker's proxy: the guest has no resolver of its own.
+Environment=HTTP_PROXY=http://127.0.0.1:3128
+Environment=HTTPS_PROXY=http://127.0.0.1:3128
+Environment=http_proxy=http://127.0.0.1:3128
+Environment=https_proxy=http://127.0.0.1:3128
+Environment=NO_PROXY=localhost,127.0.0.1
+Environment=no_proxy=localhost,127.0.0.1
 ExecStart=/bin/sh -c "{{cmd}}"
 Restart=always
 RestartSec=3

@@ -272,6 +272,27 @@ mod tests {
     }
 
     #[test]
+    fn the_running_app_reaches_the_allowlist_through_the_proxy() {
+        // The guest has no resolver: without these, every outbound call fails at DNS and never
+        // reaches the proxy, so `bunker net allow` would do nothing for the site.
+        let proxy = "http://127.0.0.1:3128";
+        for k in ["HTTPS_PROXY", "https_proxy", "http_proxy"] {
+            assert!(POOL.contains(&format!("env[{k}] = {proxy}")), "pool {k}");
+        }
+        assert!(POOL.contains("env[NO_PROXY] = localhost,127.0.0.1"));
+        // httpoxy: a request's Proxy: header arrives as HTTP_PROXY, so the pool never sets it and
+        // nginx blanks the header's param.
+        assert!(!POOL.contains("env[HTTP_PROXY]"));
+        assert!(render_nginx(&cfg()).contains("fastcgi_param HTTP_PROXY \"\";"));
+        for unit in [render_worker("queue", "php artisan queue:work"), SCHEDULER_SERVICE.to_string()] {
+            for k in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+                assert!(unit.contains(&format!("Environment={k}={proxy}")), "{k} in {unit}");
+            }
+            assert!(unit.contains("Environment=NO_PROXY=localhost,127.0.0.1"));
+        }
+    }
+
+    #[test]
     fn worker_command_is_escaped_for_systemd() {
         let u = render_worker("q", r#"echo "a\b" 50% $HOME"#);
         assert!(
