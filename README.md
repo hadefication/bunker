@@ -10,6 +10,21 @@ tunnels.
 > isolation) is on `main` until v2 ships. The design is in
 > [`docs/superpowers/specs/2026-11-16-bunker-design.md`](docs/superpowers/specs/2026-11-16-bunker-design.md).
 
+## How it works
+
+- **One VM per project.** `bunker up` creates a Lima VM (Ubuntu 24.04, Apple's Virtualization
+  framework) and provisions it as root over `limactl shell`: nginx, php-fpm from the ondrej PPA,
+  Percona Server 8.4, Node if configured, the queue workers and scheduler as systemd units, and an
+  nftables firewall. Every apt repo key and the Composer binary are pinned.
+- **Confined from the Mac's side.** The Lima hostagent and both SSH forwards run under
+  `sandbox-exec` profiles, started by launchd. The guest's only way out is bunker's egress proxy on
+  the Mac, which refuses internal addresses and allows only the project's lists. A VM started any
+  other way is reported as unconfined and never put online.
+- **Published by a Cloudflare named tunnel** that runs on the Mac, never in the VM, and only while
+  the VM is confined.
+- **Deploys ship the committed `HEAD`.** Code is copied into the VM, built there, audited, and
+  switched live in one rename. Secrets live in the macOS login Keychain and reach the VM on stdin.
+
 ## Commands
 
 Every command prints readable output by default. For agents and scripts, add `--json`: output is
@@ -41,8 +56,9 @@ Every command prints readable output by default. For agents and scripts, add `--
 | `bunker version`, `--version`, `-V` | Print the version, commit and build date |
 
 Config lives only in `~/.bunker/<project>/bunker.toml` (`BUNKER_HOME` overrides `~/.bunker`),
-never in the repo. Unknown keys and invalid values are errors. Commands that take a project find it
-by name, or from the repo you run them in.
+never in the repo. Unknown keys and invalid values are errors. `status`, `logs`, `exec`, `env` and
+`net` find the project from the repo you run them in when you don't name it; `up`, `start`, `stop`,
+`restart`, `deploy`, `rollback`, `shell` and `destroy` need the name.
 
 Allowlist edits keep the file's comments and order, refuse internal addresses (exit 4) and any
 result that would not validate, and print a `+`/`-` diff. Every change is appended to
@@ -59,6 +75,18 @@ A VM only ever starts through its LaunchAgent, under `sandbox-exec`. A VM starte
 
 Exit codes: `0` ok · `1` failure or degraded · `2` usage · `3` not found · `4` refused · `5` unconfined VM.
 
+## Where things live
+
+| Path | What |
+| --- | --- |
+| `~/.bunker/<project>/bunker.toml` | The project's config, mode 0600 |
+| `~/.bunker/<project>/logs/` | `deploy.log`, `provision.log`, and the launchd agents' output |
+| `~/.bunker/<project>/network.jsonl` | Proxy decisions, policy changes and leases |
+| `~/.bunker/images/` | Verified Ubuntu images |
+| `~/Library/LaunchAgents/com.bunker.*.plist` | `com.bunker.proxy`, and per project `.vm`, `.fwd-proxy`, `.fwd-web`, `.tunnel` |
+| Login Keychain, service `bunker.<project>` | Secrets (`APP_KEY`, `DB_PASSWORD`, Passport keys, your own) |
+| In the VM: `/srv/app/releases/`, `current`, `shared/` | Releases (five kept), the live one, and `.env` plus `storage` |
+
 ## Build from source
 
 Requires Rust 1.92 or newer, on macOS.
@@ -69,6 +97,10 @@ cargo test                    # unit and integration tests; runs anywhere
 cargo test -- --ignored sys_  # tests that touch sandbox-exec, the Keychain, launchd or Lima (on a Mac)
 cargo deny check              # supply-chain gate; must pass before committing a lockfile change
 ```
+
+`tests/acceptance/run.sh` proves containment and the lifecycle end to end on the Mac mini against a
+throwaway Laravel fixture (about 30 minutes); see [`tests/acceptance/README.md`](tests/acceptance/README.md).
+It refuses to run while a real `com.bunker.proxy` agent is installed, so stop live projects first.
 
 ## License
 

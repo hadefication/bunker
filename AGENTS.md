@@ -32,8 +32,9 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
   `--origincert ~/.cloudflared/cert.pem`) and `config` (`cloudflared.yml`). `up` runs it last, only
   for a confined VM with both `domain` and `tunnel`; `destroy` deletes the tunnel.
 - `src/logs/`: `scrub` (`Scrubber`: Keychain values, Authorization/Bearer, secret-named `k=v` and
-  JSON values, PEM private keys) and `tail` (host log files). `bunker logs` runs every line through
-  it; `Runner::stream` feeds lines as they arrive.
+  JSON values, PEM private keys), `tail` (host log files) and `rotate` (rename for bunker's own
+  logs, copytruncate for the files launchd holds open). `bunker logs` runs every line through the
+  scrubber; `Runner::stream` feeds lines as they arrive.
 - `src/deploy/`: `source` (the release tar: tracked files minus `.env*`, `--dirty` for the working
   tree), `steps` (the pipeline as data: name, guest user, script, lease), `lock` (flock on
   `deploy.lock`), `run` (`deploy` and `rollback`). Root steps never chmod or chown inside a
@@ -48,7 +49,9 @@ A Rust 2024 crate with a library (`src/lib.rs`) and a thin binary (`src/main.rs`
   `gui/<uid>`. `BUNKER_LAUNCH_AGENTS_DIR` overrides `~/Library/LaunchAgents`.
 - `src/run.rs`: every external program goes through the `Runner` trait. Tests use
   `RecordingRunner` to check exact invocations and `assert_no_secret_in_argv`.
-- `tests/`: integration tests (`assert_cmd`).
+- `tests/`: integration tests (`assert_cmd`). `tests/acceptance/`: `run.sh`, the end-to-end
+  harness for the mini (own `BUNKER_HOME`, throwaway keychain; refuses while a real
+  `com.bunker.proxy` is installed).
 
 ## Build, Test, and Development Commands
 

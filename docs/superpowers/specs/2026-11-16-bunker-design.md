@@ -192,6 +192,12 @@ disk   = "20GiB"
 [network]
 build = []   # extra hosts allowed during a deploy, on top of bunker's built-in list
 allow = []   # hosts the running site may reach; edited by `bunker net allow`
+deny  = []   # hosts blocked even when a wildcard above matches; edited by `bunker net deny`
+
+# Written by bunker, not by hand:
+[ports]      # ssh, proxy and web, picked free by `bunker init`
+[env]        # plain settings from `bunker env set KEY VALUE --plain`
+[secrets]    # names and kinds of Keychain secrets; never values
 ```
 
 The exact keys are the builder's to refine. These requirements are fixed:
@@ -217,7 +223,8 @@ The exact keys are the builder's to refine. These requirements are fixed:
 
 ### Inside the VM
 
-- Ubuntu 24.04 LTS cloud image.
+- Ubuntu 24.04 LTS cloud image. bunker downloads it itself into `~/.bunker/images/` and checks it
+  against Ubuntu's published SHA256SUMS, because a sandboxed `limactl start` has no network.
 - **Security updates in a nightly maintenance window** (designer's call, settled after review):
   - The host's nightly job, which also runs the backup, opens the OS update hosts on the proxy.
     These are the Ubuntu security and updates mirrors, the ondrej PPA, the Percona repo (MySQL)
@@ -228,6 +235,9 @@ The exact keys are the builder's to refine. These requirements are fixed:
     seconds of downtime at night, which is acceptable for personal sites. It can be turned off per
     project, in which case `bunker status` flags the pending reboot.
   - Outside the window, the update hosts are closed like everything else.
+  - **Not built in plan 2.** The window, guest security updates and the pending-reboot flag come
+    with plan 3 (backups), which owns the nightly job. Until then the guest is patched only when
+    `bunker up` re-provisions it.
 - nginx in front of php-fpm (ondrej PPA, version from config). nginx was chosen over FrankenPHP
   because it supports PHP 7.x and can front non-PHP stacks later.
 - MySQL from the config. Oracle's apt repo has no arm64 packages for Ubuntu 24.04 and Ubuntu ships only
@@ -319,6 +329,12 @@ This section was updated by the containment test. Its results section below is t
     - `[network].build` during deploys
     - OS update hosts during the nightly maintenance window only
     - `[network].allow` at all times
+  - `[network].deny` blocks a host even when a wildcard in `allow` or `build` matches it.
+  - Entries are a host, `*.domain` for its subdomains, or a public IP, on ports 80 and 443 unless
+    written `host:port`.
+  - Build and maintenance openings are time-boxed leases. A deploy or provision opens the build
+    list for at most 45 minutes; it closes when the work ends, or on its own at expiry if bunker
+    crashes mid-run.
   - Blocked requests get a 403 naming the host and the `bunker net allow` command that would permit
     it. Every decision is logged to `network.jsonl`. A broken policy file fails closed.
 
@@ -331,8 +347,13 @@ This section was updated by the containment test. Its results section below is t
   per-domain certificates, tracking leftover DNS records, and the real-IP header. Copy ideas or code,
   don't depend on Yard.
 - For Life OS, the hostname `life-os.bangkila.com` and its Cloudflare Access app stay as they are.
-  The CNAME has to point at whichever tunnel bunker uses (a reused `life-os` or a new one), which
-  needs `route dns` with overwrite or a manual DNS change.
+  The CNAME has to point at whichever tunnel bunker uses (a reused `life-os` or a new one). When a
+  record for the hostname already exists, `bunker up` stops with exit 4 (`dns_exists`) and changes
+  nothing; `bunker up --overwrite-dns` replaces it with the CNAME to bunker's tunnel.
+- cloudflared, the VM, both SSH forwards and the proxy are LaunchAgents (`com.bunker.proxy`, and
+  `com.bunker.<project>.{vm,fwd-proxy,fwd-web,tunnel}`): launchd is the supervisor,
+  restarting them on crash and at login. The tunnel agent runs `bunker tunnel-run`, which starts
+  cloudflared only while the VM is confined.
 
 ### Deploy
 
@@ -349,17 +370,18 @@ This section was updated by the containment test. Its results section below is t
    `package.json` has a `build` script, `npm ci && npm run build`. Close the build allowlist.
 4. Run `composer audit` and `npm audit --omit=dev`, and refuse on advisories unless `--allow-advisories`
    is given.
-5. Link `shared/.env` and `shared/storage`, then run `config:cache`, `route:cache` and `view:cache`.
-   This is safe now that the VM has its own copy of the code.
-6. On the first deploy only:
+5. Link `shared/.env` and `shared/storage`.
+6. On the first deploy only (no release has gone live yet):
    - generate `APP_KEY` and the Passport keypair into the Keychain, if they're absent
    - write `shared/.env` from the Keychain and `bunker.toml`, including `APP_ENV=production`,
      `APP_DEBUG=false` and the `DB_*` values
    - run the `first_deploy` hooks
 
-   For Life OS, `passport:keys` is unnecessary once its keys come from `.env`. The builder adjusts
-   the example hook.
-7. Run the `before_switch` hooks (migrations). If any step fails, the old release stays live.
+   This happens before the caches, so `config:cache` never bakes in a missing `APP_KEY`. For Life
+   OS, `passport:keys` is unnecessary once its keys come from `.env`.
+7. Run `config:cache`, `route:cache` and `view:cache`, safe now that the VM has its own copy of the
+   code. Then run the `before_switch` hooks (migrations). If any step fails, the old release stays
+   live.
 8. Flip the `current` symlink atomically, then reload php-fpm and restart the workers.
 9. Keep the last 5 releases.
 
@@ -502,14 +524,16 @@ Commands:
 
 - `bunker logs [<project>] [nginx|php|worker|app|proxy|tunnel]` tails the guest logs (nginx, php-fpm,
   workers, `storage/logs`) and the host logs (proxy, cloudflared).
-- Output passes through old bunker's secret scrubber. Logs are rotated on both sides.
+- Output passes through a secret scrubber written for v2 (old bunker had none): the project's
+  Keychain values, `Authorization`/`Bearer` credentials, password, secret, token and API-key values,
+  and PEM private keys show as `[redacted]`. Logs are rotated on both sides.
 
 ### CLI surface (initial)
 
 ```
 bunker init <project> --path <repo>     write ~/.bunker/<project>/bunker.toml (detects Laravel, PHP constraint)
-bunker up <project>                     create/provision the VM (idempotent; re-run after config changes)
-bunker deploy [<project>] [--remote <name>] [--dirty] [--allow-advisories]
+bunker up <project> [--overwrite-dns]   create/provision the VM (idempotent; re-run after config changes)
+bunker deploy <project> [--remote <name>] [--dirty] [--allow-advisories]
 bunker rollback <project>
 bunker status [<project>]               VM, services, tunnel, proxy, confinement state, current release
 bunker logs ...
@@ -524,6 +548,8 @@ bunker destroy <project>                delete VM, tunnel, LaunchAgents; print t
 bunker remote enable|allow|revoke|add ...
 bunker version / --version / -V
 ```
+
+`backup`, `restore`, `remote` and `deploy --remote` come with later plans; plan 2 built the rest.
 
 Every command has human output by default and `--json` for scripts. `bunker shell` and
 `bunker exec` can reach `.env` inside the VM, because they're operator tools. The maintainer's
