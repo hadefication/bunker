@@ -749,11 +749,10 @@ resolve inside (`127.0.0.1.nip.io`, `<LAN>.nip.io`) were refused as `internal_ad
 ## Publishing
 
 - Same repo, `hadefication/bunker`, released as **v2.0.0**. This is the maintainer's decision.
-- v2 is developed on a `v2` branch cut from the v0.1.5 `main`, so `main` and its releases stay
-  untouched until v2 ships.
-- At release, a `v1` branch is created at the old `main`, then `main` fast-forwards to `v2`. Because
-  `v2` descends from the old `main`, that's a fast-forward, not a merge, and the v0.1.x tags stay on
-  `main`'s history.
+- v2 was developed on a `v2` branch cut from the v0.1.5 `main`. With plan 2 done, the maintainer
+  had `main` fast-forward to it (2026-11-18, before the v2.0.0 release); the v0.1.x tags stay on
+  `main`'s history, and the old `main` is `5be4977`, one commit past `v0.1.5`. Work continues on
+  `main`. A `v1` branch at the old `main` is made only if a v0.1 fix is ever needed.
 - Old installs that run `self_update` get v2. That's acceptable because nothing runs on old bunker
   now: the old Life OS tunnel is already down.
 - v2 must recognise an old-layout `~/.bunker/<project>/` (a Caddyfile and no `bunker.toml`), for

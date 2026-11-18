@@ -6,8 +6,8 @@ confined from the Mac's side: it can't reach the Mac's loopback, its LAN, your t
 internet, except through bunker's allowlist proxy. Sites are published through Cloudflare named
 tunnels.
 
-> **v2 is in development on the `v2` branch.** The released v0.1 (FrankenPHP as LaunchAgents, no
-> isolation) is on `main` until v2 ships. The design is in
+> **v2 is unreleased (2.0.0-alpha) and lives on `main`.** The last v0.1 release (FrankenPHP as
+> LaunchAgents, no isolation) is the `v0.1.5` tag. The design is in
 > [`docs/superpowers/specs/2026-11-16-bunker-design.md`](docs/superpowers/specs/2026-11-16-bunker-design.md).
 
 ## How it works

@@ -1,8 +1,9 @@
 # Repository Guidelines
 
-Bunker v2 is being built on the `v2` branch from the plan in
-`docs/superpowers/plans/2026-11-16-bunker-core.md`, against the design in
-`docs/superpowers/specs/2026-11-16-bunker-design.md`. The spec is the authority.
+Bunker v2 lives on `main`, built from the plan in
+`docs/superpowers/plans/2026-11-16-bunker-core.md` (complete), against the design in
+`docs/superpowers/specs/2026-11-16-bunker-design.md`. The spec is the authority. Work happens
+directly on `main`; don't create branches or worktrees unless asked.
 
 ## Project Structure
 
