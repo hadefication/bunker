@@ -5,7 +5,7 @@ use crate::config::detect::detect;
 use crate::deploy::lock::acquire;
 use crate::deploy::source::{build_archive, release_name};
 use crate::deploy::steps::{
-    As, BASE, is_release_name, releases_script, reload_script, steps, switch_script,
+    As, BASE, is_release_name, recache_script, releases_script, reload_script, steps, switch_script,
 };
 use crate::error::{BunkerError, Result};
 use crate::host::Host;
@@ -196,6 +196,9 @@ pub fn rollback(h: &Host, project: &str) -> Result<RollbackReport> {
             format!("{project} has no release before {from} to roll back to"),
         ));
     }
+    // .env may have changed since `to` was live; its cached config would bring old values back.
+    let target = format!("{BASE}/releases/{to}");
+    run_script(h, &vm, As::App, &recache_script(&target), &mut log)?;
     run_script(h, &vm, As::Root, &switch_script(BASE, &to), &mut log)?;
     run_script(h, &vm, As::Root, &reload_script(&cfg), &mut log)?;
     Ok(RollbackReport {
@@ -687,5 +690,35 @@ mod tests {
         assert!(r.calls().iter().any(|c| {
             stdin(c).contains("ln -sfn releases/20261116T000001Z-aaaaaaa /srv/app/current.tmp")
         }));
+    }
+
+    #[test]
+    fn rollback_recaches_config_in_the_target_before_switching() {
+        // .env may have changed since the target was live (bunker env set re-caches current only).
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        r.respond_with("limactl", &SHELL, |c| {
+            if stdin(c).contains("previous=") {
+                Output::ok("current=20261116T000002Z-aaaaaaa\nprevious=20261116T000001Z-aaaaaaa\n")
+            } else {
+                Output::ok("")
+            }
+        });
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        rollback(&h, "t").unwrap();
+        let calls = r.calls();
+        let recache = calls
+            .iter()
+            .position(|c| {
+                c.args.windows(3).any(|w| w == ["sudo", "-u", "app"])
+                    && stdin(c).contains("cd /srv/app/releases/20261116T000001Z-aaaaaaa\nphp artisan config:cache\nchmod 0640")
+            })
+            .expect("config re-cached as app in the target");
+        let switch = calls
+            .iter()
+            .position(|c| stdin(c).contains("mv -T"))
+            .unwrap();
+        assert!(recache < switch);
     }
 }

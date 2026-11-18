@@ -43,6 +43,15 @@ fn in_release(dir: &str, lease: bool, body: &str) -> String {
     format!("set -euo pipefail\n{proxy}cd {dir}\n{body}\n")
 }
 
+/// Caches config as app, then takes it out of reach of every other guest user: bootstrap/cache's
+/// default ACL makes new files world-readable, and config.php holds every secret.
+pub const CONFIG_CACHE: &str = "php artisan config:cache\nchmod 0640 bootstrap/cache/config.php";
+
+/// Re-caches config in `dir` (a release, or `/srv/app/current`); runs as app.
+pub fn recache_script(dir: &str) -> String {
+    in_release(dir, false, CONFIG_CACHE)
+}
+
 fn hooks(cmds: &[String]) -> String {
     if cmds.is_empty() {
         "true".into()
@@ -144,7 +153,7 @@ mkdir -p bootstrap/cache\nsetfacl -m u:app:rwx,d:u:app:rwx bootstrap/cache"
         in_release(
             &dir,
             false,
-            "php artisan config:cache\nphp artisan route:cache\nphp artisan view:cache",
+            &format!("{CONFIG_CACHE}\nphp artisan route:cache\nphp artisan view:cache"),
         ),
         false,
     ));
@@ -191,15 +200,22 @@ pub fn is_release_name(s: &str) -> bool {
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
 }
 
-/// Points `current` at `releases/<release>` with one rename.
+/// Points `current` at `releases/<release>` with one rename, then records it in `history`, the
+/// root-owned list of releases that went live. Rollback picks from it, so a release that was
+/// uploaded but never switched to (an interrupted deploy) is never a rollback target.
 pub fn switch_script(base: &str, release: &str) -> String {
     format!(
-        "set -euo pipefail\nln -sfn releases/{release} {base}/current.tmp\nmv -T {base}/current.tmp {base}/current\n"
+        "set -euo pipefail\n\
+if [ ! -e {base}/history ] && [ -L {base}/current ]; then\n\
+  basename \"$(readlink -f {base}/current)\" >> {base}/history\n\
+fi\n\
+ln -sfn releases/{release} {base}/current.tmp\nmv -T {base}/current.tmp {base}/current\nprintf '%s\\n' {release} >> {base}/history\n"
     )
 }
 
-/// `releases`: real directories (not symlinks) with release names, sorted, one per line. `cur`
-/// and `prev`: current's release and the one sorting just before it (names sort by time).
+/// `releases`: real directories (not symlinks) with release names, sorted, one per line. `cur`:
+/// current's release. `prev`: the newest entry in `history` that isn't `cur` and is still a real
+/// release directory; empty when there is none (or no history yet).
 fn current_and_previous(base: &str) -> String {
     format!(
         "releases() {{\n\
@@ -211,7 +227,16 @@ fn current_and_previous(base: &str) -> String {
   done | sort\n\
 }}\n\
 cur=$(basename \"$(readlink -f {base}/current)\")\n\
-prev=$(releases | awk -v c=\"$cur\" '$0 == c {{ print p; exit }} {{ p = $0 }}')\n"
+prev=\n\
+if [ -f {base}/history ]; then\n\
+  while IFS= read -r n; do\n\
+    p={base}/releases/$n\n\
+    if [ \"$n\" != \"$cur\" ] && [[ $n =~ ^[0-9]{{8}}T[0-9]{{6}}Z-[0-9a-f]{{7}}(-dirty)?$ ]] && [ -d \"$p\" ] && [ ! -L \"$p\" ]; then\n\
+      prev=$n\n\
+      break\n\
+    fi\n\
+  done < <(awk '{{ l[NR] = $0 }} END {{ for (i = NR; i > 0; i--) print l[i] }}' {base}/history)\n\
+fi\n"
     )
 }
 
@@ -246,6 +271,93 @@ mod tests {
 
     fn names(s: &[Step]) -> Vec<&str> {
         s.iter().map(|s| s.name).collect()
+    }
+
+    /// Runs `releases_script` with bash against a fake /srv/app and returns its two fields.
+    fn run_releases(live: &[&str], extra: &[&str], current: &str) -> (String, String) {
+        let d = tempfile::tempdir().unwrap();
+        let base = d.path().to_str().unwrap();
+        for r in live.iter().chain(extra) {
+            std::fs::create_dir_all(d.path().join("releases").join(r)).unwrap();
+        }
+        let hist: String = live.iter().map(|r| format!("{r}\n")).collect();
+        if !live.is_empty() {
+            std::fs::write(d.path().join("history"), hist).unwrap();
+        }
+        std::os::unix::fs::symlink(format!("releases/{current}"), d.path().join("current"))
+            .unwrap();
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(releases_script(base))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let s = String::from_utf8(out.stdout).unwrap();
+        let f = |k: &str| {
+            s.lines()
+                .find_map(|l| l.strip_prefix(k))
+                .unwrap_or("")
+                .to_string()
+        };
+        (f("current="), f("previous="))
+    }
+
+    const R1: &str = "20261116T000001Z-aaaaaaa";
+    const R2: &str = "20261116T000002Z-bbbbbbb";
+    const R3: &str = "20261116T000003Z-ccccccc";
+
+    #[test]
+    fn previous_is_the_last_release_that_went_live_not_the_next_name_down() {
+        // R2 was uploaded but never switched to (an interrupted deploy left it behind).
+        assert_eq!(run_releases(&[R1, R3], &[R2], R3), (R3.into(), R1.into()));
+    }
+
+    #[test]
+    fn previous_skips_history_entries_that_are_gone_or_not_release_names() {
+        // R1 went live but was pruned; only R3 remains, so there is nothing to roll back to.
+        let (c, p) = run_releases(&[R3], &[], R3);
+        assert_eq!((c.as_str(), p.as_str()), (R3, ""));
+    }
+
+    #[test]
+    fn no_history_means_no_previous() {
+        assert_eq!(run_releases(&[], &[R1, R2], R2), (R2.into(), "".into()));
+    }
+
+    #[test]
+    fn switch_records_the_release_in_root_owned_history() {
+        let s = switch_script("/srv/app", R2);
+        assert!(s.contains(&format!("printf '%s\\n' {R2} >> /srv/app/history")));
+        assert!(s.find("mv -T").unwrap() < s.rfind(">> /srv/app/history").unwrap());
+    }
+
+    #[test]
+    fn first_switch_with_history_seeds_it_with_the_release_already_live() {
+        // VMs deployed before history existed: the live release must stay a rollback target.
+        let s = switch_script("/srv/app", R2);
+        let seed = s
+            .find("if [ ! -e /srv/app/history ] && [ -L /srv/app/current ]; then")
+            .expect("seeds history");
+        assert!(seed < s.find("ln -sfn").unwrap());
+        assert!(s.contains("basename \"$(readlink -f /srv/app/current)\" >> /srv/app/history"));
+    }
+
+    #[test]
+    fn config_cache_is_left_unreadable_to_other_guest_users() {
+        // bootstrap/cache inherits a default ACL that makes new files world-readable, and
+        // config.php holds every secret; deploy runs third-party scripts and must not read it.
+        let s = steps(&cfg(false), "r1", false, false);
+        let caches = s.iter().find(|s| s.name == "caches").unwrap();
+        assert!(
+            caches
+                .cmd
+                .contains("php artisan config:cache\nchmod 0640 bootstrap/cache/config.php")
+        );
+        assert!(recache_script("/srv/app/releases/r1").contains("cd /srv/app/releases/r1\nphp artisan config:cache\nchmod 0640 bootstrap/cache/config.php"));
     }
 
     #[test]
@@ -400,7 +512,14 @@ mod tests {
         for r in &all {
             std::fs::create_dir_all(rel.join(r)).unwrap();
         }
-        // Rolled back: current is the 2nd oldest, so it and the 1st (its previous) survive.
+        // All nine went live, then a rollback to the 2nd oldest: it survives, and so does its
+        // previous, the 9th (the release the rollback left).
+        let hist: String = all
+            .iter()
+            .chain([&all[1]])
+            .map(|r| format!("{r}\n"))
+            .collect();
+        std::fs::write(d.path().join("history"), hist).unwrap();
         std::os::unix::fs::symlink(format!("releases/{}", all[1]), d.path().join("current"))
             .unwrap();
         let out = run(&prune_script(base));
@@ -414,10 +533,7 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         left.sort();
-        let want: Vec<String> = [0, 1, 4, 5, 6, 7, 8]
-            .iter()
-            .map(|&i| all[i].clone())
-            .collect();
+        let want: Vec<String> = [1, 4, 5, 6, 7, 8].iter().map(|&i| all[i].clone()).collect();
         assert_eq!(left, want);
     }
 
@@ -453,6 +569,12 @@ mod tests {
         }
         std::fs::create_dir_all(rel.join("20261116T000002Z-zzzzzzz; id")).unwrap();
         std::os::unix::fs::symlink("/", rel.join("20261116T000002Z-bbbbbbb")).unwrap();
+        // history is root's, but the names in it still have to be real release directories.
+        std::fs::write(
+            d.path().join("history"),
+            "20261116T000001Z-aaaaaaa\n20261116T000002Z-aaaaaaa\n20261116T000002Z-zzzzzzz; id\n20261116T000002Z-bbbbbbb\n20261116T000003Z-aaaaaaa\n",
+        )
+        .unwrap();
         std::os::unix::fs::symlink(
             "releases/20261116T000003Z-aaaaaaa",
             d.path().join("current"),
@@ -473,12 +595,19 @@ mod tests {
         for i in 1..=3 {
             std::fs::create_dir_all(d.path().join("releases").join(n(i))).unwrap();
         }
+        std::fs::write(
+            d.path().join("history"),
+            format!("{}\n{}\n{}\n", n(1), n(2), n(3)),
+        )
+        .unwrap();
         std::os::unix::fs::symlink(format!("releases/{}", n(3)), d.path().join("current")).unwrap();
         let out = run(&releases_script(base));
         assert_eq!(
             String::from_utf8_lossy(&out.stdout),
             format!("current={}\nprevious={}\n", n(3), n(2))
         );
+        // Only the first release ever went live: nothing to roll back to.
+        std::fs::write(d.path().join("history"), format!("{}\n", n(1))).unwrap();
         std::fs::remove_file(d.path().join("current")).unwrap();
         std::os::unix::fs::symlink(format!("releases/{}", n(1)), d.path().join("current")).unwrap();
         let out = run(&releases_script(base));

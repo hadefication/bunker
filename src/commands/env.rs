@@ -2,6 +2,7 @@
 //! and reach the guest only on a child's stdin. No command prints a value.
 use crate::config::validate::validate_env_key;
 use crate::config::{Config, SecretKind, resolve_project_in};
+use crate::deploy::steps::recache_script;
 use crate::error::{BunkerError, Result};
 use crate::host::Host;
 use crate::lima::vm::{instance_status, shell, vm_name};
@@ -335,14 +336,11 @@ pub fn push_env(h: &Host, project: &str, rendered: &str) -> Result<String> {
     {
         return Ok("wrote shared/.env in the VM".into());
     }
-    h.r.run_ok(&shell(h, &vm).args([
-        "sudo",
-        "-u",
-        "app",
-        "php",
-        "/srv/app/current/artisan",
-        "config:cache",
-    ]))?;
+    h.r.run_ok(
+        &shell(h, &vm)
+            .args(["sudo", "-u", "app", "bash", "-s"])
+            .stdin(recache_script("/srv/app/current").into_bytes()),
+    )?;
     h.r.run_ok(&shell(h, &vm).args([
         "sudo",
         "systemctl",
@@ -419,6 +417,30 @@ mod tests {
             store.get("t", "API_TOKEN").unwrap().unwrap().as_slice(),
             SECRET.as_bytes()
         );
+    }
+
+    #[test]
+    fn push_env_recaches_as_app_and_locks_the_cache() {
+        let d = tempfile::tempdir().unwrap();
+        let r = RecordingRunner::new();
+        running(&r);
+        let h = host(&r, &CONFINED, d.path());
+        project(&h, "t");
+        push_env(&h, "t", "A=\"b\"\n").unwrap();
+        assert!(r.calls().iter().any(|c| {
+            c.args.windows(3).any(|w| w == ["sudo", "-u", "app"])
+                && c.args
+                    .iter()
+                    .chain(std::iter::once(
+                        &String::from_utf8_lossy(c.stdin.as_deref().unwrap_or_default())
+                            .into_owned(),
+                    ))
+                    .any(|a| {
+                        a.contains(
+                            "php artisan config:cache\nchmod 0640 bootstrap/cache/config.php",
+                        )
+                    })
+        }));
     }
 
     #[test]
